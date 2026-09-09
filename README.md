@@ -1,10 +1,14 @@
 # KaleidoVR Asset Organizer
 
+<p align="center">
+  <img src="Unity Organizer Tool/Editor/Icons/Kali_Logo.png" alt="KaleidoVR" width="420">
+</p>
+
 A Unity editor tool that sorts the assets of a VRChat avatar into a consistent folder structure, remaps their references, and writes a scene plus an optional prefab that point at those organized copies.
 
 Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its meshes, materials, textures, animations, controllers, menus, and parameters are collected and filed into one output folder.
 
-- Version **1.0.12**
+- Version **1.0.0**
 - Unity **2022.3.22f1** or newer, including Unity 6 (6000.x)
 - VRChat SDK3 Avatars is optional
 
