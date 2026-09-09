@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.6";
+        public static readonly string VERSION = "1.0.7";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -557,6 +557,20 @@ namespace KaleidoVR.EditorTools
 
                 int copied = 0, moved = 0, ignored = 0;
                 HashSet<string> projectAssetPaths = CollectProjectAssetPaths(window.objectsToOrganize, window.ignoreList, logEntries);
+                int beforePackSweep = projectAssetPaths.Count;
+                CollectMovePackAssets(window, projectAssetPaths, logEntries);
+                if (projectAssetPaths.Count > beforePackSweep)
+                {
+                    logEntries.Add("Move pack sweep added " + (projectAssetPaths.Count - beforePackSweep) + " extra files from the avatar folder.");
+                }
+
+                if (IsSelectionAlreadyInOutput(window.objectsToOrganize, outputDirectory))
+                {
+                    EditorUtility.DisplayDialog(
+                        "KaleidoVR Asset Organizer",
+                        "The selected object already lives in the output folder.\n\nMove will not go back to MisterPink (or any other original folder) to pick up leftover files.\n\nDrop the original avatar FBX/prefab, set a new empty output folder, and Organize with Move.",
+                        "OK");
+                }
 
                 if (projectAssetPaths.Count == 0)
                 {
@@ -637,6 +651,15 @@ namespace KaleidoVR.EditorTools
                     {
                         movedAssetsMap[path] = path;
                         continue;
+                    }
+
+                    if (action == "Copy")
+                    {
+                        // Never copy when this type (or the whole export list) is set to Move.
+                        if (KaleidoAssetOrganizerHelpers.InferTransferAction(window.organizeOptions) == "Move")
+                        {
+                            action = "Move";
+                        }
                     }
 
                     if (action == "Copy")
@@ -1076,6 +1099,111 @@ namespace KaleidoVR.EditorTools
 
             logEntries.Add("Project assets resolved: " + assetPaths.Count);
             return assetPaths;
+        }
+
+        private static bool IsSelectionAlreadyInOutput(List<UnityEngine.Object> selected, string outputDirectory)
+        {
+            if (selected == null) return false;
+            foreach (UnityEngine.Object obj in selected)
+            {
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component component) go = component.gameObject;
+                string path = go != null ? ResolveGameObjectAssetPath(go) : AssetDatabase.GetAssetPath(obj);
+                if (KaleidoAssetOrganizerHelpers.IsSameOrInside(path, outputDirectory)) return true;
+            }
+            return false;
+        }
+
+        private static void CollectMovePackAssets(KaleidoAssetOrganizer window, HashSet<string> assetPaths, List<string> logEntries)
+        {
+            if (window == null || assetPaths == null || assetPaths.Count == 0) return;
+            if (KaleidoAssetOrganizerHelpers.InferTransferAction(window.organizeOptions) != "Move") return;
+
+            string packRoot = FindAvatarPackRoot(assetPaths);
+            if (string.IsNullOrEmpty(packRoot) || packRoot.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+            {
+                logEntries.Add("Move pack sweep skipped: no avatar folder root.");
+                return;
+            }
+            if (KaleidoAssetOrganizerHelpers.IsSameOrInside(packRoot, window.outputDirectory)
+                || KaleidoAssetOrganizerHelpers.IsSameOrInside(window.outputDirectory, packRoot))
+            {
+                logEntries.Add("Move pack sweep skipped: avatar folder is the output folder (" + packRoot + ").");
+                return;
+            }
+
+            logEntries.Add("Move pack root: " + packRoot);
+            foreach (string guid in AssetDatabase.FindAssets(string.Empty, new[] { packRoot }))
+            {
+                string found = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(AssetDatabase.GUIDToAssetPath(guid));
+                if (string.IsNullOrEmpty(found) || AssetDatabase.IsValidFolder(found)) continue;
+                if (KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(found)) continue;
+                UnityEngine.Object mainAsset = AssetDatabase.LoadMainAssetAtPath(found);
+                string typeName = KaleidoAssetOrganizerHelpers.ResolveExportTypeName(found, mainAsset, mainAsset);
+                if (KaleidoAssetOrganizerHelpers.ResolveOrganizeAction(window.organizeOptions, typeName) != "Move") continue;
+                AddAssetPath(found, assetPaths);
+            }
+        }
+
+        private static string FindAvatarPackRoot(HashSet<string> assetPaths)
+        {
+            List<string> dirs = new List<string>();
+            foreach (string path in assetPaths)
+            {
+                if (string.IsNullOrEmpty(path) || !KaleidoAssetOrganizerHelpers.IsInsideAssets(path)) continue;
+                string dir = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(Path.GetDirectoryName(path));
+                if (!string.IsNullOrEmpty(dir)) dirs.Add(dir);
+            }
+            if (dirs.Count == 0) return null;
+
+            string common = dirs[0];
+            for (int i = 1; i < dirs.Count; i++)
+            {
+                common = CommonAssetFolder(common, dirs[i]);
+                if (string.IsNullOrEmpty(common) || common.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+            }
+
+            string current = common;
+            string best = common;
+            while (!string.IsNullOrEmpty(current) && KaleidoAssetOrganizerHelpers.IsInsideAssets(current) && !current.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+            {
+                if (LooksLikeAvatarPack(current)) best = current;
+                int slash = current.LastIndexOf('/');
+                if (slash <= 0) break;
+                current = current.Substring(0, slash);
+            }
+            return best;
+        }
+
+        private static string CommonAssetFolder(string a, string b)
+        {
+            a = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(a);
+            b = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(b);
+            string[] pa = a.Split('/');
+            string[] pb = b.Split('/');
+            int n = Math.Min(pa.Length, pb.Length);
+            List<string> parts = new List<string>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!string.Equals(pa[i], pb[i], StringComparison.OrdinalIgnoreCase)) break;
+                parts.Add(pa[i]);
+            }
+            if (parts.Count == 0) return null;
+            return string.Join("/", parts.ToArray());
+        }
+
+        private static bool LooksLikeAvatarPack(string folder)
+        {
+            string[] markers = { "FBX", "Texture", "Textures", "Prefab", "Prefabs", "Materials", "VRC3.0", "VRC", "3.0", "Animation", "Animations" };
+            int hits = 0;
+            foreach (string marker in markers)
+            {
+                if (AssetDatabase.IsValidFolder(folder + "/" + marker)) hits++;
+            }
+            return hits >= 2;
         }
 
         private static string ResolveGameObjectAssetPath(GameObject go)
