@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.9";
+        public static readonly string VERSION = "1.0.10";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -826,34 +826,11 @@ namespace KaleidoVR.EditorTools
                 Debug.Log($"[KaleidoVR] Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
                 logEntries.Add($"Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
 
-                List<string> leftoverSameNames = FindLeftoverSameNamedAssets(movedAssetsMap, window.outputDirectory);
-                foreach (string leftover in leftoverSameNames)
-                {
-                    logEntries.Add("Left behind (not referenced by the selected object): " + leftover);
-                }
-
                 if (copied == 0 && moved == 0)
                 {
                     EditorUtility.DisplayDialog(
                         "KaleidoVR Asset Organizer",
                         "The folder tree was created, but no assets were copied or moved.\n\nCheck that the selected object references Project assets (FBX, prefab, materials) and that the output folder is not the same folder those assets already live in.",
-                        "OK");
-                }
-                else
-                {
-                    string leftoverText = leftoverSameNames.Count == 0
-                        ? ""
-                        : "\n\nThese files were not linked on the selected object, so they were left in place:\n- "
-                          + string.Join("\n- ", leftoverSameNames.GetRange(0, Mathf.Min(8, leftoverSameNames.Count)));
-                    if (leftoverSameNames.Count > 8)
-                    {
-                        leftoverText += "\n- ...";
-                    }
-                    EditorUtility.DisplayDialog(
-                        "KaleidoVR Asset Organizer",
-                        "Copied: " + copied + "\nMoved: " + moved + "\nIgnored: " + ignored
-                        + (copied > 0 ? "\n\nCopy leaves the original in place. Set that type to Move if you want the source file to leave its folder." : "")
-                        + leftoverText,
                         "OK");
                 }
             }
@@ -910,35 +887,6 @@ namespace KaleidoVR.EditorTools
 
             logEntries.Add("Move failed: " + sourcePath + " (" + moveError + ")");
             return false;
-        }
-
-        private static List<string> FindLeftoverSameNamedAssets(Dictionary<string, string> transferred, string outputDirectory)
-        {
-            List<string> leftovers = new List<string>();
-            if (transferred == null || transferred.Count == 0) return leftovers;
-
-            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (KeyValuePair<string, string> kvp in transferred)
-            {
-                string destPath = kvp.Value;
-                if (string.IsNullOrEmpty(destPath)) continue;
-                string fileName = Path.GetFileName(destPath);
-                if (string.IsNullOrEmpty(fileName)) continue;
-                string filter = Path.GetFileNameWithoutExtension(fileName);
-                if (string.IsNullOrEmpty(filter)) continue;
-
-                foreach (string guid in AssetDatabase.FindAssets(filter))
-                {
-                    string found = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(AssetDatabase.GUIDToAssetPath(guid));
-                    if (string.IsNullOrEmpty(found)) continue;
-                    if (!string.Equals(Path.GetFileName(found), fileName, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (KaleidoAssetOrganizerHelpers.IsSameOrInside(found, outputDirectory)) continue;
-                    if (found.Equals(destPath, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (seen.Add(found)) leftovers.Add(found);
-                }
-            }
-            leftovers.Sort(StringComparer.OrdinalIgnoreCase);
-            return leftovers;
         }
 
         private static HashSet<int> BuildProtectedInstanceIds(List<UnityEngine.Object> selected)
