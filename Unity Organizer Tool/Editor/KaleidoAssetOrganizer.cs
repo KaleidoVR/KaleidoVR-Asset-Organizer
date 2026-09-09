@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.2";
+        public static readonly string VERSION = "1.0.3";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -768,13 +768,17 @@ namespace KaleidoVR.EditorTools
                             RemapSerializedReferences(comp, copiedAssetsMap);
                         }
 
-                        if (window.autoSetupVRCDescriptor) ApplyVRCDescriptorSetup(finalTargetRoot, movedAssetsMap);
+                        if (window.autoSetupVRCDescriptor && activeTargetGameObjects.Count <= 1)
+                        {
+                            ApplyVRCDescriptorSetup(finalTargetRoot, movedAssetsMap);
+                        }
 
                         if (window.createPrefab)
                         {
                             string prefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
                             string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
-                            string transferredPrefab = FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
+                            bool wrappingMultiple = activeTargetGameObjects.Count > 1;
+                            string transferredPrefab = wrappingMultiple ? null : FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
                             bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
                             bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
 
