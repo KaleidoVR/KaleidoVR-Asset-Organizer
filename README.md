@@ -2,7 +2,6 @@
 
 <p align="center">
   <img src="Unity Organizer Tool/Editor/Icons/Kali_Logo.png" alt="KaleidoVR" width="300">
-  <img width="500" height="1041" alt="Organizer Example" src="https://github.com/user-attachments/assets/6269c221-be0f-4704-9626-2b7c6949a293" />
 </p>
 
 A Unity editor tool that sorts the assets of a VRChat avatar into a consistent folder structure, remaps their references, and writes a scene plus an optional prefab that point at those organized copies.
@@ -12,7 +11,9 @@ Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its
 - Version **1.0.2**
 - Unity **2022.3.22f1** or newer, including Unity 6 (6000.x)
 - VRChat SDK3 Avatars is optional
-
+<p align="center">
+<img width="500" height="1041" alt="Organizer Example" src="https://github.com/user-attachments/assets/6269c221-be0f-4704-9626-2b7c6949a293" />
+</p>
 ## Install
 
 1. Download the latest `.unitypackage` from [Releases](https://github.com/KaleidoVR/KaleidoVR-Asset-Organizer/releases).
