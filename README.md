@@ -2,6 +2,7 @@
 
 <p align="center">
   <img src="Unity Organizer Tool/Editor/Icons/Kali_Logo.png" alt="KaleidoVR" width="300">
+  <img width="500" height="1041" alt="Organizer Example" src="https://github.com/user-attachments/assets/6269c221-be0f-4704-9626-2b7c6949a293" />
 </p>
 
 A Unity editor tool that sorts the assets of a VRChat avatar into a consistent folder structure, remaps their references, and writes a scene plus an optional prefab that point at those organized copies.
