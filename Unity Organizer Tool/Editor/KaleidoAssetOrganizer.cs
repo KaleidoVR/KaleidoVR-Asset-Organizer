@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.4";
+        public static readonly string VERSION = "1.0.5";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -35,8 +35,8 @@ namespace KaleidoVR.EditorTools
         private Texture2D headerIcon;
 
         public string outputDirectory = "Assets/KaleidoVR/Models/Test";
-        public const string SAMPLE_SCENE_NAME = "MyAvatar_Scene";
-        public const string SAMPLE_PREFAB_NAME = "MyAvatar";
+        public const string SAMPLE_SCENE_NAME = "Name Scene";
+        public const string SAMPLE_PREFAB_NAME = "Name Prefab";
         public string sceneName = SAMPLE_SCENE_NAME;
         public string prefabName = SAMPLE_PREFAB_NAME;
         public bool createPrefab = true;
@@ -151,8 +151,8 @@ namespace KaleidoVR.EditorTools
             }
             if (EditorPrefs.HasKey("KVR_SceneName")) sceneName = EditorPrefs.GetString("KVR_SceneName");
             if (EditorPrefs.HasKey("KVR_PrefabName")) prefabName = EditorPrefs.GetString("KVR_PrefabName");
-            if (sceneName == "OrganizedScene" || string.IsNullOrEmpty(sceneName)) sceneName = SAMPLE_SCENE_NAME;
-            if (prefabName == "NewAvatar" || string.IsNullOrEmpty(prefabName)) prefabName = SAMPLE_PREFAB_NAME;
+            if (string.IsNullOrEmpty(sceneName) || sceneName == "OrganizedScene" || sceneName == "MyAvatar_Scene") sceneName = SAMPLE_SCENE_NAME;
+            if (string.IsNullOrEmpty(prefabName) || prefabName == "NewAvatar" || prefabName == "MyAvatar") prefabName = SAMPLE_PREFAB_NAME;
             if (EditorPrefs.HasKey("KVR_CreatePrefab")) createPrefab = EditorPrefs.GetBool("KVR_CreatePrefab");
             autoParsePoiyomi = true;
             autoSetupVRCDescriptor = true;
@@ -2019,6 +2019,7 @@ namespace KaleidoVR.EditorTools
         {
             return string.IsNullOrEmpty(name)
                 || name == "OrganizedScene"
+                || name == "MyAvatar_Scene"
                 || name == KaleidoAssetOrganizer.SAMPLE_SCENE_NAME;
         }
 
@@ -2026,6 +2027,7 @@ namespace KaleidoVR.EditorTools
         {
             return string.IsNullOrEmpty(name)
                 || name == "NewAvatar"
+                || name == "MyAvatar"
                 || name == KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
         }
 
