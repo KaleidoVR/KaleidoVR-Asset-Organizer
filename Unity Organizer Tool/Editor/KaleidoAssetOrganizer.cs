@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.0";
+        public static readonly string VERSION = "1.0.1";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -558,9 +558,9 @@ namespace KaleidoVR.EditorTools
 
                 HashSet<string> fullyIgnoredAssetPaths = KaleidoAssetOrganizerHelpers.BuildRecursiveIgnoreMap(window.ignoreList);
 
-                if (!PrepareOutputFolders(outputDirectory, window.autoParsePoiyomi, logEntries))
+                if (!PrepareOutputFolders(outputDirectory, logEntries))
                 {
-                    EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Could not create the output folder tree inside Assets. Check the Console and pick another folder.", "OK");
+                    EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Could not create the output folder inside Assets. Check the Console and pick another folder.", "OK");
                     return;
                 }
 
@@ -772,38 +772,35 @@ namespace KaleidoVR.EditorTools
                         if (window.createPrefab)
                         {
                             string prefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
-                            if (!EnsureSingleAssetDirectory(prefabFolder))
+                            string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
+                            string transferredPrefab = FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
+                            bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
+                            bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
+
+                            if (transferredWasMoved)
+                            {
+                                // Move keeps the same GUID. Do not rewrite the prefab the selection still instances.
+                                savedPrefabPath = transferredPrefab;
+                                logEntries.Add("Using moved prefab without rewriting it: " + transferredPrefab);
+                            }
+                            else if (!EnsureSingleAssetDirectory(prefabFolder))
                             {
                                 logEntries.Add("Prefab folder create failed: " + prefabFolder);
                             }
                             else
                             {
-                                string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
-                                string transferredPrefab = FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
-                                bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
-                                bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
-
-                                if (transferredWasMoved)
+                                if (transferredWasCopied)
                                 {
-                                    // Move keeps the same GUID. Do not rewrite the prefab the selection still instances.
-                                    savedPrefabPath = transferredPrefab;
-                                    logEntries.Add("Using moved prefab without rewriting it: " + transferredPrefab);
+                                    prefabPath = transferredPrefab;
                                 }
-                                else
+                                if (protectedAssetPaths.Contains(prefabPath) || (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null && !transferredWasCopied))
                                 {
-                                    if (transferredWasCopied)
-                                    {
-                                        prefabPath = transferredPrefab;
-                                    }
-                                    if (protectedAssetPaths.Contains(prefabPath) || (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null && !transferredWasCopied))
-                                    {
-                                        prefabPath = AssetDatabase.GenerateUniqueAssetPath($"{prefabFolder}/{safePrefabName}.prefab");
-                                    }
-                                    AssetDatabase.SaveAssets();
-                                    PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
-                                    savedPrefabPath = prefabPath;
-                                    logEntries.Add("Prefab saved: " + prefabPath);
+                                    prefabPath = AssetDatabase.GenerateUniqueAssetPath($"{prefabFolder}/{safePrefabName}.prefab");
                                 }
+                                AssetDatabase.SaveAssets();
+                                PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
+                                savedPrefabPath = prefabPath;
+                                logEntries.Add("Prefab saved: " + prefabPath);
                             }
                         }
 
@@ -823,12 +820,14 @@ namespace KaleidoVR.EditorTools
                 }
                 Debug.Log($"[KaleidoVR] Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
                 logEntries.Add($"Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
+                RemoveEmptyOutputFolders(window.outputDirectory, logEntries);
+                AssetDatabase.Refresh();
 
                 if (copied == 0 && moved == 0)
                 {
                     EditorUtility.DisplayDialog(
                         "KaleidoVR Asset Organizer",
-                        "The folder tree was created, but no assets were copied or moved.\n\nCheck that the selected object references Project assets (FBX, prefab, materials) and that the output folder is not the same folder those assets already live in.",
+                        "No assets were copied or moved.\n\nCheck that the selected object references Project assets (FBX, prefab, materials) and that the output folder is not the same folder those assets already live in.",
                         "OK");
                 }
             }
@@ -1687,42 +1686,63 @@ namespace KaleidoVR.EditorTools
             catch (Exception ex) { Debug.LogWarning("[KaleidoVR] Reflection error: " + ex.Message); }
         }
 
-        private static bool PrepareOutputFolders(string outputDirectory, bool parsePoiyomi, List<string> logEntries)
+        private static bool PrepareOutputFolders(string outputDirectory, List<string> logEntries)
         {
-            List<string> folders = new List<string>
+            if (!EnsureSingleAssetDirectory(outputDirectory))
             {
-                outputDirectory,
-                outputDirectory + "/FBX",
-                outputDirectory + "/Materials",
-                outputDirectory + "/Textures",
-                outputDirectory + "/Audio",
-                outputDirectory + "/Prefabs",
-                outputDirectory + "/Other",
-                outputDirectory + "/3.0",
-                outputDirectory + "/3.0/Animations",
-                outputDirectory + "/3.0/BlendTrees",
-                outputDirectory + "/3.0/Avatar Masks",
-                outputDirectory + "/3.0/Controllers",
-                outputDirectory + "/3.0/Menus",
-                outputDirectory + "/3.0/VRCExpressionParameters"
-            };
-
-            if (parsePoiyomi)
-            {
-                folders.Add(outputDirectory + "/Textures/Normals");
-                folders.Add(outputDirectory + "/Textures/Emissions");
-                folders.Add(outputDirectory + "/Textures/Metallic");
-                folders.Add(outputDirectory + "/Textures/Roughness");
-                folders.Add(outputDirectory + "/Textures/AO");
+                logEntries.Add("Folder create failed: " + outputDirectory);
+                return false;
             }
+            return true;
+        }
 
+        private static void RemoveEmptyOutputFolders(string outputDirectory, List<string> logEntries)
+        {
+            string root = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(outputDirectory);
+            if (string.IsNullOrEmpty(root) || !AssetDatabase.IsValidFolder(root)) return;
+
+            List<string> folders = new List<string>();
+            CollectAssetFoldersDepthFirst(root, folders);
             foreach (string folder in folders)
             {
-                if (!EnsureSingleAssetDirectory(folder))
+                if (folder.Equals(root, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!IsAssetFolderEmpty(folder)) continue;
+                if (AssetDatabase.DeleteAsset(folder))
                 {
-                    logEntries.Add("Folder create failed: " + folder);
-                    return false;
+                    if (logEntries != null) logEntries.Add("Removed empty folder: " + folder);
                 }
+            }
+        }
+
+        private static void CollectAssetFoldersDepthFirst(string folder, List<string> list)
+        {
+            string[] subs = AssetDatabase.GetSubFolders(folder);
+            if (subs != null)
+            {
+                foreach (string sub in subs)
+                {
+                    CollectAssetFoldersDepthFirst(sub, list);
+                }
+            }
+            list.Add(folder);
+        }
+
+        private static bool IsAssetFolderEmpty(string assetPath)
+        {
+            if (AssetDatabase.GetSubFolders(assetPath).Length > 0) return false;
+
+            string projectRoot = GetProjectRootPath();
+            string abs = Path.GetFullPath(Path.Combine(projectRoot, assetPath.Replace('/', Path.DirectorySeparatorChar)));
+            if (!Directory.Exists(abs)) return true;
+
+            foreach (string entry in Directory.GetFileSystemEntries(abs))
+            {
+                string name = Path.GetFileName(entry);
+                if (string.IsNullOrEmpty(name)) continue;
+                if (name.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
+                return false;
             }
             return true;
         }
