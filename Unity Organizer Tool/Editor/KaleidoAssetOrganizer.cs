@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.3";
+        public static readonly string VERSION = "1.0.4";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -35,8 +35,10 @@ namespace KaleidoVR.EditorTools
         private Texture2D headerIcon;
 
         public string outputDirectory = "Assets/KaleidoVR/Models/Test";
-        public string sceneName = "OrganizedScene";
-        public string prefabName = "NewAvatar";
+        public const string SAMPLE_SCENE_NAME = "MyAvatar_Scene";
+        public const string SAMPLE_PREFAB_NAME = "MyAvatar";
+        public string sceneName = SAMPLE_SCENE_NAME;
+        public string prefabName = SAMPLE_PREFAB_NAME;
         public bool createPrefab = true;
         // =========================================================================
         // BLOCK 2: AUTOMATION PIPELINES VARIABLE DECLARATIONS
@@ -149,9 +151,11 @@ namespace KaleidoVR.EditorTools
             }
             if (EditorPrefs.HasKey("KVR_SceneName")) sceneName = EditorPrefs.GetString("KVR_SceneName");
             if (EditorPrefs.HasKey("KVR_PrefabName")) prefabName = EditorPrefs.GetString("KVR_PrefabName");
+            if (sceneName == "OrganizedScene" || string.IsNullOrEmpty(sceneName)) sceneName = SAMPLE_SCENE_NAME;
+            if (prefabName == "NewAvatar" || string.IsNullOrEmpty(prefabName)) prefabName = SAMPLE_PREFAB_NAME;
             if (EditorPrefs.HasKey("KVR_CreatePrefab")) createPrefab = EditorPrefs.GetBool("KVR_CreatePrefab");
-            if (EditorPrefs.HasKey("KVR_AutoParsePoi")) autoParsePoiyomi = EditorPrefs.GetBool("KVR_AutoParsePoi");
-            if (EditorPrefs.HasKey("KVR_AutoSetupVRC")) autoSetupVRCDescriptor = EditorPrefs.GetBool("KVR_AutoSetupVRC");
+            autoParsePoiyomi = true;
+            autoSetupVRCDescriptor = true;
 
             // Loop through options keys matrix to load each specific Export dropdown action choice state
             List<string> keys = new List<string>(organizeOptions.Keys);
@@ -172,8 +176,6 @@ namespace KaleidoVR.EditorTools
             EditorPrefs.SetString("KVR_SceneName", sceneName);
             EditorPrefs.SetString("KVR_PrefabName", prefabName);
             EditorPrefs.SetBool("KVR_CreatePrefab", createPrefab);
-            EditorPrefs.SetBool("KVR_AutoParsePoi", autoParsePoiyomi);
-            EditorPrefs.SetBool("KVR_AutoSetupVRC", autoSetupVRCDescriptor);
 
             foreach (KeyValuePair<string, string> kvp in organizeOptions)
             {
@@ -219,7 +221,7 @@ namespace KaleidoVR.EditorTools
         {
             float logoHeight = headerIcon != null ? 200f : 15f;
             float outputDirHeight = 45f;
-            float settingsHeight = 115f;
+            float settingsHeight = 75f;
             float objectsHeight = 65f + (objectsToOrganize.Count * 22f);
             float organizeOptionsHeight = (organizeOptions.Count * 22f) + 70f;
             float ignoreListHeight = 65f + (ignoreList.Count * 22f);
@@ -274,17 +276,18 @@ namespace KaleidoVR.EditorTools
             foreach (var root in rawIgnoreList)
             {
                 if (root == null) continue;
+                if (root is GameObject || root is Component)
+                {
+                    continue;
+                }
+
                 string rootPath = AssetDatabase.GetAssetPath(root);
                 if (!string.IsNullOrEmpty(rootPath) && !subAssetPaths.Contains(rootPath))
                 {
                     subAssetPaths.Add(rootPath);
                 }
 
-                if (root is GameObject go)
-                {
-                    collectedObjects.Add(go);
-                    foreach (Transform child in go.transform) CollectChildObjects(child, collectedObjects, new List<UnityEngine.Object>());
-                }
+                collectedObjects.Add(root);
             }
             // =========================================================================
             // BLOCK 9: DOWNSTREAM DEPENDENCIES RESOLVER BLOCKS
@@ -554,10 +557,13 @@ namespace KaleidoVR.EditorTools
                 }
 
                 Debug.Log("[KaleidoVR] Running integrated avatar asset organization tool...");
+                window.autoParsePoiyomi = true;
+                window.autoSetupVRCDescriptor = true;
 
                 EditorUtility.DisplayProgressBar("KaleidoVR Asset Organizer", "Preparing output folders...", 0.02f);
 
                 HashSet<string> fullyIgnoredAssetPaths = KaleidoAssetOrganizerHelpers.BuildRecursiveIgnoreMap(window.ignoreList);
+                HashSet<GameObject> ignoredHierarchy = BuildIgnoredGameObjectSet(window.ignoreList);
 
                 if (!PrepareOutputFolders(outputDirectory, logEntries))
                 {
@@ -566,7 +572,7 @@ namespace KaleidoVR.EditorTools
                 }
 
                 int copied = 0, moved = 0, ignored = 0;
-                HashSet<string> projectAssetPaths = CollectProjectAssetPaths(window.objectsToOrganize, window.ignoreList, logEntries);
+                HashSet<string> projectAssetPaths = CollectProjectAssetPaths(window.objectsToOrganize, window.ignoreList, ignoredHierarchy, logEntries);
 
                 if (projectAssetPaths.Count == 0)
                 {
@@ -710,7 +716,7 @@ namespace KaleidoVR.EditorTools
                 // =========================================================================
 
                 string safePrefabName = KaleidoAssetOrganizerHelpers.SanitizeFileName(window.prefabName);
-                if (string.IsNullOrEmpty(safePrefabName)) safePrefabName = "NewAvatar";
+                if (string.IsNullOrEmpty(safePrefabName)) safePrefabName = KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
                 string savedPrefabPath = null;
                 GameObject finalTargetRoot = null;
                 List<GameObject> instantiatedInstances = new List<GameObject>();
@@ -761,6 +767,20 @@ namespace KaleidoVR.EditorTools
                             }
                         }
 
+                        List<string> ignoredRelativePaths = CollectIgnoredRelativePaths(activeTargetGameObjects, window.ignoreList);
+                        int strippedIgnored = 0;
+                        if (activeTargetGameObjects.Count <= 1)
+                        {
+                            strippedIgnored += StripIgnoredChildren(finalTargetRoot, ignoredRelativePaths, logEntries);
+                        }
+                        else
+                        {
+                            foreach (GameObject inst in instantiatedInstances)
+                            {
+                                strippedIgnored += StripIgnoredChildren(inst, ignoredRelativePaths, logEntries);
+                            }
+                        }
+
                         Component[] allComponents = finalTargetRoot.GetComponentsInChildren<Component>(true);
                         foreach (Component comp in allComponents)
                         {
@@ -778,7 +798,7 @@ namespace KaleidoVR.EditorTools
                             string prefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
                             string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
                             bool wrappingMultiple = activeTargetGameObjects.Count > 1;
-                            string transferredPrefab = wrappingMultiple ? null : FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
+                            string transferredPrefab = (wrappingMultiple || strippedIgnored > 0) ? null : FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
                             bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
                             bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
 
@@ -977,10 +997,11 @@ namespace KaleidoVR.EditorTools
             return null;
         }
 
-        private static HashSet<string> CollectProjectAssetPaths(List<UnityEngine.Object> selected, List<UnityEngine.Object> ignoreList, List<string> logEntries)
+        private static HashSet<string> CollectProjectAssetPaths(List<UnityEngine.Object> selected, List<UnityEngine.Object> ignoreList, HashSet<GameObject> ignoredHierarchy, List<string> logEntries)
         {
             HashSet<string> assetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (selected == null) return assetPaths;
+            if (ignoredHierarchy == null) ignoredHierarchy = new HashSet<GameObject>();
 
             foreach (UnityEngine.Object obj in selected)
             {
@@ -991,6 +1012,7 @@ namespace KaleidoVR.EditorTools
                 GameObject go = obj as GameObject;
                 if (go == null && obj is Component component) go = component.gameObject;
                 if (go == null) continue;
+                if (ignoredHierarchy.Contains(go)) continue;
 
                 string sourcePath = ResolveGameObjectAssetPath(go);
                 if (!string.IsNullOrEmpty(sourcePath))
@@ -1006,6 +1028,7 @@ namespace KaleidoVR.EditorTools
                     foreach (Component comp in components)
                     {
                         if (comp == null) continue;
+                        if (ignoredHierarchy.Contains(comp.gameObject)) continue;
                         harvestTargets.Add(comp);
                     }
                 }
@@ -1222,7 +1245,7 @@ namespace KaleidoVR.EditorTools
             if (window == null) return null;
 
             string safeSceneName = KaleidoAssetOrganizerHelpers.SanitizeFileName(window.sceneName);
-            if (string.IsNullOrEmpty(safeSceneName)) safeSceneName = "OrganizedScene";
+            if (string.IsNullOrEmpty(safeSceneName)) safeSceneName = KaleidoAssetOrganizer.SAMPLE_SCENE_NAME;
 
             string outputFolder = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(window.outputDirectory);
             if (!EnsureSingleAssetDirectory(outputFolder))
@@ -1440,6 +1463,142 @@ namespace KaleidoVR.EditorTools
             }
 
             return instance;
+        }
+
+        private static HashSet<GameObject> BuildIgnoredGameObjectSet(List<UnityEngine.Object> ignoreList)
+        {
+            HashSet<GameObject> ignored = new HashSet<GameObject>();
+            if (ignoreList == null) return ignored;
+
+            foreach (UnityEngine.Object obj in ignoreList)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
+                if (go == null) continue;
+
+                Transform[] transforms = go.GetComponentsInChildren<Transform>(true);
+                if (transforms == null) continue;
+                foreach (Transform childTransform in transforms)
+                {
+                    if (childTransform != null) ignored.Add(childTransform.gameObject);
+                }
+            }
+
+            return ignored;
+        }
+
+        private static List<string> CollectIgnoredRelativePaths(List<GameObject> sourceRoots, List<UnityEngine.Object> ignoreList)
+        {
+            List<string> paths = new List<string>();
+            if (sourceRoots == null || ignoreList == null) return paths;
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (UnityEngine.Object obj in ignoreList)
+            {
+                if (obj == null) continue;
+                GameObject ignoredGo = obj as GameObject;
+                if (ignoredGo == null && obj is Component asComponent) ignoredGo = asComponent.gameObject;
+                if (ignoredGo == null) continue;
+
+                foreach (GameObject sourceRoot in sourceRoots)
+                {
+                    if (sourceRoot == null) continue;
+                    string relative;
+                    if (TryGetRelativeHierarchyPath(sourceRoot, ignoredGo, out relative)
+                        || TryGetRelativePathFromNamedAncestor(ignoredGo, sourceRoot.name, out relative))
+                    {
+                        if (seen.Add(relative)) paths.Add(relative);
+                    }
+                }
+            }
+
+            paths.Sort((a, b) => b.Length.CompareTo(a.Length));
+            return paths;
+        }
+
+        private static bool TryGetRelativeHierarchyPath(GameObject ancestor, GameObject descendant, out string relative)
+        {
+            relative = null;
+            if (ancestor == null || descendant == null) return false;
+
+            Transform current = descendant.transform;
+            Transform ancestorTransform = ancestor.transform;
+            if (current == ancestorTransform) return false;
+
+            List<string> parts = new List<string>();
+            while (current != null && current != ancestorTransform)
+            {
+                parts.Add(current.name);
+                current = current.parent;
+            }
+
+            if (current != ancestorTransform) return false;
+            parts.Reverse();
+            relative = string.Join("/", parts);
+            return !string.IsNullOrEmpty(relative);
+        }
+
+        private static bool TryGetRelativePathFromNamedAncestor(GameObject descendant, string ancestorName, out string relative)
+        {
+            relative = null;
+            if (descendant == null || string.IsNullOrEmpty(ancestorName)) return false;
+
+            Transform current = descendant.transform;
+            List<string> parts = new List<string>();
+            while (current != null && current.name != ancestorName)
+            {
+                parts.Add(current.name);
+                current = current.parent;
+            }
+
+            if (current == null || current.name != ancestorName || parts.Count == 0) return false;
+            parts.Reverse();
+            relative = string.Join("/", parts);
+            return true;
+        }
+
+        private static int StripIgnoredChildren(GameObject cloneRoot, List<string> relativePaths, List<string> logEntries)
+        {
+            if (cloneRoot == null || relativePaths == null || relativePaths.Count == 0) return 0;
+
+            int stripped = 0;
+            foreach (string relative in relativePaths)
+            {
+                if (string.IsNullOrEmpty(relative)) continue;
+                Transform found = FindChildByRelativePath(cloneRoot.transform, relative);
+                if (found == null) continue;
+                logEntries.Add("Ignored hierarchy object: " + relative);
+                UnityEngine.Object.DestroyImmediate(found.gameObject);
+                stripped++;
+            }
+            return stripped;
+        }
+
+        private static Transform FindChildByRelativePath(Transform root, string relativePath)
+        {
+            if (root == null || string.IsNullOrEmpty(relativePath)) return null;
+
+            Transform current = root;
+            string[] parts = relativePath.Split('/');
+            foreach (string part in parts)
+            {
+                if (string.IsNullOrEmpty(part)) continue;
+                Transform next = null;
+                for (int i = 0; i < current.childCount; i++)
+                {
+                    Transform child = current.GetChild(i);
+                    if (child != null && child.name == part)
+                    {
+                        next = child;
+                        break;
+                    }
+                }
+                if (next == null) return null;
+                current = next;
+            }
+
+            return current == root ? null : current;
         }
 
         private static void RemapCopiedAssetReferences(Dictionary<string, string> copiedAssetsMap, HashSet<string> protectedAssetPaths)
@@ -1856,6 +2015,20 @@ namespace KaleidoVR.EditorTools
             EditorGUILayout.EndHorizontal();
         }
 
+        private static bool IsSampleSceneName(string name)
+        {
+            return string.IsNullOrEmpty(name)
+                || name == "OrganizedScene"
+                || name == KaleidoAssetOrganizer.SAMPLE_SCENE_NAME;
+        }
+
+        private static bool IsSamplePrefabName(string name)
+        {
+            return string.IsNullOrEmpty(name)
+                || name == "NewAvatar"
+                || name == KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
+        }
+
         public static void DrawSettings(KaleidoAssetOrganizer window)
         {
             GUILayout.Label("Settings & Automation Pipelines", EditorStyles.boldLabel);
@@ -1864,14 +2037,7 @@ namespace KaleidoVR.EditorTools
 
             float originalLabelWidth = EditorGUIUtility.labelWidth;
             EditorGUIUtility.labelWidth = 180f;
-
             window.createPrefab = EditorGUILayout.Toggle("Create Prefab", window.createPrefab);
-
-            EditorGUI.BeginDisabledGroup(!window.createPrefab);
-            window.autoParsePoiyomi = EditorGUILayout.Toggle("Texture Sorter", window.autoParsePoiyomi);
-            window.autoSetupVRCDescriptor = EditorGUILayout.Toggle("Auto-Link FX & Menu", window.autoSetupVRCDescriptor);
-            EditorGUI.EndDisabledGroup();
-
             EditorGUIUtility.labelWidth = originalLabelWidth;
         }
 
@@ -1883,7 +2049,7 @@ namespace KaleidoVR.EditorTools
 
             if (window.objectsToOrganize.Count > countBeforeDrop && window.objectsToOrganize.Count > 0 && window.objectsToOrganize[countBeforeDrop] != null)
             {
-                if (window.sceneName == "OrganizedScene" || string.IsNullOrEmpty(window.sceneName) || window.prefabName == "NewAvatar" || string.IsNullOrEmpty(window.prefabName))
+                if (IsSampleSceneName(window.sceneName) || IsSamplePrefabName(window.prefabName))
                 {
                     string primaryName = window.objectsToOrganize[countBeforeDrop].name;
                     window.sceneName = primaryName + "_Scene";
@@ -1916,13 +2082,13 @@ namespace KaleidoVR.EditorTools
                 if (GUILayout.Button("X", GUILayout.Width(25)))
                 {
                     window.objectsToOrganize.RemoveAt(i); i--;
-                    if (window.objectsToOrganize.Count == 0) { window.sceneName = "OrganizedScene"; window.prefabName = "NewAvatar"; }
+                    if (window.objectsToOrganize.Count == 0) { window.sceneName = KaleidoAssetOrganizer.SAMPLE_SCENE_NAME; window.prefabName = KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME; }
                     else if (i < 0 && window.objectsToOrganize.Count > 0 && window.objectsToOrganize != null) { string primaryName = window.objectsToOrganize[0].name; window.sceneName = primaryName + "_Scene"; window.prefabName = primaryName; }
                 }
                 EditorGUILayout.EndHorizontal();
             }
             EditorGUILayout.BeginHorizontal(); GUILayout.Space(5); if (GUILayout.Button("+", GUILayout.Width(35))) window.objectsToOrganize.Add(null);
-            if (GUILayout.Button("-", GUILayout.Width(35)) && window.objectsToOrganize.Count > 0) { window.objectsToOrganize.RemoveAt(window.objectsToOrganize.Count - 1); if (window.objectsToOrganize.Count == 0) { window.sceneName = "OrganizedScene"; window.prefabName = "NewAvatar"; } }
+            if (GUILayout.Button("-", GUILayout.Width(35)) && window.objectsToOrganize.Count > 0) { window.objectsToOrganize.RemoveAt(window.objectsToOrganize.Count - 1); if (window.objectsToOrganize.Count == 0) { window.sceneName = KaleidoAssetOrganizer.SAMPLE_SCENE_NAME; window.prefabName = KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME; } }
             GUILayout.FlexibleSpace(); EditorGUILayout.EndHorizontal();
         }
 

@@ -11,7 +11,7 @@ Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its
 <img width="500" height="1041" alt="Organizer Example" src="https://github.com/user-attachments/assets/6269c221-be0f-4704-9626-2b7c6949a293" />
 </p>
 
-- Version **1.0.3**
+- Version **1.0.4**
 - Unity **2022.3.22f1** or newer, including Unity 6 (6000.x)
 - VRChat SDK3 Avatars is optional
 
@@ -52,8 +52,8 @@ Scripts, DLLs, shaders, and anything under `Packages/` or `Assets/Editor` are al
 ### Settings
 
 - **Create Prefab** — after organizing, build a prefab in `<output>/Prefabs/` whose components point at the newly organized assets.
-- **Texture Sorter** — sort textures into subfolders by suffix, detecting normal, emission, metallic, roughness, and ambient occlusion maps by name.
-- **Auto-Link FX & Menu** — add or reuse a `VRCAvatarDescriptor` on the generated prefab and assign the FX layer, expressions menu, and expression parameters that were organized.
+- Textures are always sorted into subfolders by suffix (normal, emission, metallic, roughness, AO).
+- **Auto-Link FX & Menu** always runs on a single organized object: add or reuse a `VRCAvatarDescriptor` and assign the FX layer, expressions menu, and expression parameters.
 
 All settings persist between sessions via `EditorPrefs`.
 
