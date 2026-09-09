@@ -1,10 +1,10 @@
 # KaleidoVR Asset Organizer
 
-A Unity editor tool that sorts the assets of a VRChat avatar into a consistent folder structure, remaps their references, and optionally builds a ready-to-use prefab.
+A Unity editor tool that sorts the assets of a VRChat avatar into a consistent folder structure, remaps their references, and writes a scene plus an optional prefab that point at those organized copies.
 
 Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its meshes, materials, textures, animations, controllers, menus, and parameters are collected and filed into one output folder.
 
-- Version **1.0.0**
+- Version **1.0.1**
 - Unity **2022.3.22f1** or newer, including Unity 6 (6000.x)
 - VRChat SDK3 Avatars is optional
 
@@ -26,11 +26,11 @@ The VRChat SDK3 Avatars package is only needed for the **Auto-Link FX & Menu** o
 ## Usage
 
 1. Set **Output Directory** with **Select Folder**. It must be inside `Assets`.
-2. Drag your avatar FBX or prefab into **Objects to Organize**. Use assets from the Project window; objects that exist only in a scene have no asset path to organize.
-3. Optionally set a **Prefab Name** and drag anything you want untouched into the **Ignore List**.
+2. Drag your avatar into **Objects to Organize**. Project FBX/prefab assets work, and so do scene instances — those resolve back to their source asset.
+3. Optionally set **Scene Name** and **Prefab Name**, and drag anything you want untouched into the **Ignore List**.
 4. Press **Organize Assets**.
 
-The **Scene Name** and **Prefab Name** fields auto-fill from the first object you drop in.
+The **Scene Name** and **Prefab Name** fields auto-fill from the first object you drop in. Organizing always writes a scene named after **Scene Name**. **Create Prefab** also writes a prefab into `<output>/Prefabs/` and places that prefab into the scene.
 
 ### Export List Options
 
@@ -54,6 +54,7 @@ All settings persist between sessions via `EditorPrefs`.
 
 ```
 <output folder>/
+├── <Scene Name>.unity
 ├── FBX/
 ├── Materials/
 ├── Textures/                       (Normals, Emissions, Metallic, Roughness, AO)
@@ -78,8 +79,6 @@ This matters because duplicating a `.meta` file duplicates its GUID, which leave
 Every run writes a log of what was copied, moved, and ignored to `Logs/KaleidoVR/Organizer/`.
 
 ## Known limitations
-
-The **Scene Name** field is reserved and currently unused; the pipeline does not create a scene.
 
 Prefab generation expects the avatar root as a single object. Dropping several root objects nests them all under one new parent named after **Prefab Name**.
 
