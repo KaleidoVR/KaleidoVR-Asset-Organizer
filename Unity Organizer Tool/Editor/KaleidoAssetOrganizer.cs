@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.10";
+        public static readonly string VERSION = "1.0.11";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -724,8 +724,7 @@ namespace KaleidoVR.EditorTools
 
                     if (activeTargetGameObjects.Count == 1)
                     {
-                        GameObject rootGo = ResolveOrganizedGameObject(activeTargetGameObjects[0], movedAssetsMap);
-                        finalTargetRoot = InstantiateForPrefab(rootGo, protectedInstanceIds);
+                        finalTargetRoot = InstantiateForPrefab(activeTargetGameObjects[0], protectedInstanceIds);
                         if (finalTargetRoot != null)
                         {
                             finalTargetRoot.name = safePrefabName;
@@ -737,8 +736,7 @@ namespace KaleidoVR.EditorTools
                         finalTargetRoot = new GameObject(safePrefabName);
                         foreach (var go in activeTargetGameObjects)
                         {
-                            GameObject targetGo = ResolveOrganizedGameObject(go, movedAssetsMap);
-                            GameObject instance = InstantiateForPrefab(targetGo, protectedInstanceIds);
+                            GameObject instance = InstantiateForPrefab(go, protectedInstanceIds);
                             if (instance != null)
                             {
                                 instance.transform.SetParent(finalTargetRoot.transform);
@@ -1295,21 +1293,6 @@ namespace KaleidoVR.EditorTools
             return Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath;
         }
 
-        private static GameObject ResolveOrganizedGameObject(GameObject source, Dictionary<string, string> movedAssetsMap)
-        {
-            if (source == null) return null;
-
-            string oldAssetPath = ResolveGameObjectAssetPath(source);
-
-            if (!string.IsNullOrEmpty(oldAssetPath) && movedAssetsMap.TryGetValue(oldAssetPath, out string newPath))
-            {
-                GameObject updatedAssetSource = AssetDatabase.LoadAssetAtPath<GameObject>(newPath);
-                if (updatedAssetSource != null) return updatedAssetSource;
-            }
-
-            return source;
-        }
-
         private static GameObject TryInstantiatePrefab(UnityEngine.Object prefabAsset)
         {
             if (prefabAsset == null) return null;
@@ -1328,28 +1311,13 @@ namespace KaleidoVR.EditorTools
             if (source == null) return null;
 
             GameObject instance = null;
-            if (PrefabUtility.IsPartOfPrefabAsset(source))
+            bool sourceIsPrefabAsset = PrefabUtility.IsPartOfPrefabAsset(source) && !PrefabUtility.IsPartOfPrefabInstance(source);
+            if (sourceIsPrefabAsset)
             {
                 instance = TryInstantiatePrefab(source);
             }
 
-            if (instance == null && PrefabUtility.IsPartOfPrefabInstance(source))
-            {
-                UnityEngine.Object prefabAsset = SafeGetPrefabAssetSource(source);
-                instance = TryInstantiatePrefab(prefabAsset);
-            }
-
-            if (instance == null)
-            {
-                string assetPath = ResolveGameObjectAssetPath(source);
-                if (!string.IsNullOrEmpty(assetPath))
-                {
-                    UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(assetPath);
-                    instance = TryInstantiatePrefab(main);
-                }
-            }
-
-            if (instance == null || IsProtectedObject(instance, protectedInstanceIds) || instance == source)
+            if (instance == null || instance == source || IsProtectedObject(instance, protectedInstanceIds))
             {
                 instance = UnityEngine.Object.Instantiate(source);
             }
@@ -1395,14 +1363,14 @@ namespace KaleidoVR.EditorTools
 
                         UnityEngine.Object referenced = property.objectReferenceValue;
                         if (referenced == null) continue;
+                        if (IsHierarchyReference(referenced)) continue;
 
                         string referencedPath = AssetDatabase.GetAssetPath(referenced);
                         if (string.IsNullOrEmpty(referencedPath)) continue;
                         if (!movedAssetsMap.TryGetValue(referencedPath, out string remappedPath)) continue;
                         if (referencedPath.Equals(remappedPath, StringComparison.OrdinalIgnoreCase)) continue;
 
-                        UnityEngine.Object remapped = AssetDatabase.LoadAssetAtPath(remappedPath, referenced.GetType());
-                        if (remapped == null) remapped = AssetDatabase.LoadMainAssetAtPath(remappedPath);
+                        UnityEngine.Object remapped = FindRemappedObject(referenced, remappedPath);
                         if (remapped == null) continue;
 
                         property.objectReferenceValue = remapped;
@@ -1419,6 +1387,68 @@ namespace KaleidoVR.EditorTools
             catch (Exception)
             {
             }
+        }
+
+        private static UnityEngine.Object FindRemappedObject(UnityEngine.Object original, string remappedPath)
+        {
+            if (original == null || string.IsNullOrEmpty(remappedPath)) return null;
+
+            Type type = original.GetType();
+            UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath(remappedPath);
+            if (assets == null || assets.Length == 0)
+            {
+                return AssetDatabase.LoadAssetAtPath(remappedPath, type)
+                    ?? AssetDatabase.LoadMainAssetAtPath(remappedPath);
+            }
+
+            long originalLocalId;
+            bool hasLocalId = AssetDatabase.TryGetGUIDAndLocalFileIdentifier(original, out _, out originalLocalId);
+
+            UnityEngine.Object idMatch = null;
+            UnityEngine.Object nameMatch = null;
+            UnityEngine.Object nameMatchIgnoreCase = null;
+            UnityEngine.Object onlyTypeMatch = null;
+            int typeCount = 0;
+
+            foreach (UnityEngine.Object candidate in assets)
+            {
+                if (candidate == null || !type.IsInstanceOfType(candidate)) continue;
+
+                typeCount++;
+                onlyTypeMatch = candidate;
+
+                if (hasLocalId
+                    && AssetDatabase.TryGetGUIDAndLocalFileIdentifier(candidate, out _, out long candidateId)
+                    && candidateId == originalLocalId)
+                {
+                    idMatch = candidate;
+                }
+
+                if (candidate.name == original.name)
+                {
+                    if (nameMatch == null) nameMatch = candidate;
+                }
+                else if (nameMatchIgnoreCase == null
+                         && string.Equals(candidate.name, original.name, StringComparison.OrdinalIgnoreCase))
+                {
+                    nameMatchIgnoreCase = candidate;
+                }
+            }
+
+            if (idMatch != null) return idMatch;
+            if (nameMatch != null) return nameMatch;
+            if (nameMatchIgnoreCase != null) return nameMatchIgnoreCase;
+            if (AssetDatabase.IsMainAsset(original)) return AssetDatabase.LoadMainAssetAtPath(remappedPath);
+            if (typeCount == 1) return onlyTypeMatch;
+            return null;
+        }
+
+        private static bool IsHierarchyReference(UnityEngine.Object referenced)
+        {
+            if (referenced is Transform) return true;
+            if (referenced is Component) return true;
+            if (referenced is GameObject && !AssetDatabase.IsMainAsset(referenced)) return true;
+            return false;
         }
         // =========================================================================
         // BLOCK 15: DESCRIPTOR LAYER AUTOMATION LINKS ENGINE
