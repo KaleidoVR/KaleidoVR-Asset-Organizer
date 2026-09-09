@@ -1,0 +1,93 @@
+# KaleidoVR Asset Organizer
+
+A Unity editor tool that sorts the assets of a VRChat avatar into a consistent folder structure, remaps their references, and optionally builds a ready-to-use prefab.
+
+Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its meshes, materials, textures, animations, controllers, menus, and parameters are collected and filed into one output folder.
+
+- Version **6.1.0**
+- Unity **2022.3.22f1** or newer, including Unity 6 (6000.x)
+- VRChat SDK3 Avatars is optional
+
+## Install
+
+1. Download the latest `.unitypackage` from [Releases](https://github.com/KaleidoVR/KaleidoVR-Asset-Organizer/releases).
+2. In Unity, choose **Assets > Import Package > Custom Package...** and select the file.
+3. Import everything. Files land in `Assets/KaleidoVR/Editor/`.
+4. Open the tool from the menu bar: **KaleidoVR > Asset Organizer**.
+
+To install from source instead, copy the `Editor` folder (including its `.meta` files) into `Assets/KaleidoVR/` in your project.
+
+## Requirements
+
+Unity 2022.3.22f1 or newer. The tool only uses editor APIs that exist in the 2022.3 LTS line, so it also compiles and runs on Unity 6.
+
+The VRChat SDK3 Avatars package is only needed for the **Auto-Link FX & Menu** option. Everything else — organizing, copying, moving, and prefab creation — works in a plain Unity project. If the SDK is absent, the descriptor step is skipped with a warning instead of failing.
+
+## Usage
+
+1. Set **Output Directory** with **Select Folder**. It must be inside `Assets`.
+2. Drag your avatar FBX or prefab into **Objects to Organize**. Use assets from the Project window; objects that exist only in a scene have no asset path to organize.
+3. Optionally set a **Prefab Name** and drag anything you want untouched into the **Ignore List**.
+4. Press **Organize Assets**.
+
+The **Scene Name** and **Prefab Name** fields auto-fill from the first object you drop in.
+
+### Export List Options
+
+Each asset type can be set to one of three actions:
+
+- **Copy** — duplicate the asset into the output folder, leaving the original in place. This is the default and the safe choice.
+- **Move** — relocate the original into the output folder. Use only when you intend to move your source files.
+- **Ignore** — skip the type entirely.
+
+Scripts, DLLs, shaders, and anything under `Packages/` or `Assets/Editor` are always skipped, so the tool will not relocate Poiyomi, the VRChat SDK, or other installed packages.
+
+### Settings
+
+- **Create Prefab** — after organizing, build a prefab in `<output>/Prefabs/` whose components point at the newly organized assets.
+- **Texture Sorter** — sort textures into subfolders by suffix, detecting normal, emission, metallic, roughness, and ambient occlusion maps by name.
+- **Auto-Link FX & Menu** — add or reuse a `VRCAvatarDescriptor` on the generated prefab and assign the FX layer, expressions menu, and expression parameters that were organized.
+
+All settings persist between sessions via `EditorPrefs`.
+
+## Output structure
+
+```
+<output folder>/
+├── FBX/
+├── Materials/
+├── Textures/                       (Normals, Emissions, Metallic, Roughness, AO)
+├── Audio/
+├── Prefabs/
+├── Other/
+└── 3.0/
+    ├── Animations/
+    ├── BlendTrees/
+    ├── Avatar Masks/
+    ├── Controllers/
+    ├── Menus/
+    └── VRCExpressionParameters/
+```
+
+## How references are kept intact
+
+Copies are made through the Unity asset database rather than by copying files and their `.meta` on disk. Each copy therefore gets its own GUID, and the tool then rewrites the serialized references of the copied assets and the generated prefab to point at the new files.
+
+This matters because duplicating a `.meta` file duplicates its GUID, which leaves two assets claiming the same identity and causes materials, controllers, and prefabs to resolve to the wrong file.
+
+Every run writes a log of what was copied, moved, and ignored to `Logs/KaleidoVR/Organizer/`.
+
+## Known limitations
+
+The **Scene Name** field is reserved and currently unused; the pipeline does not create a scene.
+
+Prefab generation expects the avatar root as a single object. Dropping several root objects nests them all under one new parent named after **Prefab Name**.
+
+## Links
+
+- [kalivr.com](https://kalivr.com)
+- [Discord](https://discord.com/invite/cRsufJssTA)
+
+## License
+
+[MIT](LICENSE)
