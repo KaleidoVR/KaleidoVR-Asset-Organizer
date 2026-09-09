@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.5";
+        public static readonly string VERSION = "1.0.6";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -864,7 +864,7 @@ namespace KaleidoVR.EditorTools
             {
                 if (obj == null) continue;
                 GameObject go = obj as GameObject;
-                if (go == null && obj is Component component) go = component.gameObject;
+                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
                 if (go == null)
                 {
                     ids.Add(obj.GetInstanceID());
@@ -874,17 +874,17 @@ namespace KaleidoVR.EditorTools
                 Transform[] transforms = go.GetComponentsInChildren<Transform>(true);
                 if (transforms != null)
                 {
-                    foreach (Transform transform in transforms)
+                    foreach (Transform childTransform in transforms)
                     {
-                        if (transform != null) ids.Add(transform.gameObject.GetInstanceID());
+                        if (childTransform != null) ids.Add(childTransform.gameObject.GetInstanceID());
                     }
                 }
-                Component[] components = go.GetComponentsInChildren<Component>(true);
-                if (components != null)
+                Component[] childComponents = go.GetComponentsInChildren<Component>(true);
+                if (childComponents != null)
                 {
-                    foreach (Component component in components)
+                    foreach (Component childComponent in childComponents)
                     {
-                        if (component != null) ids.Add(component.GetInstanceID());
+                        if (childComponent != null) ids.Add(childComponent.GetInstanceID());
                     }
                 }
             }
