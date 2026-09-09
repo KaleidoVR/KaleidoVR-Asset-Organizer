@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.1";
+        public static readonly string VERSION = "1.0.3";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -142,15 +142,9 @@ namespace KaleidoVR.EditorTools
         // Internal engine caching tracker pass to recover data keys from your hard disk environment
         private void LoadEditorPreferences()
         {
-            if (EditorPrefs.HasKey("KVR_OutputDir")) outputDirectory = EditorPrefs.GetString("KVR_OutputDir");
-            else
+            if (EditorPrefs.HasKey("KVR_OutputDir"))
             {
-                string editorFolder = GetToolEditorFolder();
-                if (!string.IsNullOrEmpty(editorFolder))
-                {
-                    int slash = editorFolder.LastIndexOf('/');
-                    if (slash > 0) outputDirectory = editorFolder.Substring(0, slash) + "/Models/Test";
-                }
+                outputDirectory = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(EditorPrefs.GetString("KVR_OutputDir"));
             }
             if (EditorPrefs.HasKey("KVR_SceneName")) sceneName = EditorPrefs.GetString("KVR_SceneName");
             if (EditorPrefs.HasKey("KVR_PrefabName")) prefabName = EditorPrefs.GetString("KVR_PrefabName");
@@ -343,7 +337,53 @@ namespace KaleidoVR.EditorTools
             string lower = path.ToLowerInvariant();
             return lower.EndsWith(".cs") || lower.EndsWith(".dll") || lower.EndsWith(".asmdef") || lower.EndsWith(".pdb")
                    || lower.EndsWith(".meta") || lower.StartsWith("packages/")
-                   || lower == "assets/editor" || lower.StartsWith("assets/editor/");
+                   || lower == "assets/editor" || lower.StartsWith("assets/editor/")
+                   || lower.StartsWith("library/") || lower.StartsWith("resources/unity_builtin_extra")
+                   || lower.Contains("unity default resources") || lower.Contains("unity_builtin_extra");
+        }
+
+        public static string NormalizeAssetPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            return path.Replace("\\", "/").Trim().TrimEnd('/');
+        }
+
+        public static bool IsInsideAssets(string path)
+        {
+            path = NormalizeAssetPath(path);
+            return path.Equals("Assets", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool IsSameOrInside(string path, string folder)
+        {
+            path = NormalizeAssetPath(path);
+            folder = NormalizeAssetPath(folder);
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(folder)) return false;
+            return path.Equals(folder, StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool TryNormalizeOutputDirectory(string raw, out string output, out string error)
+        {
+            output = NormalizeAssetPath(raw);
+            error = null;
+            if (string.IsNullOrEmpty(output) || !IsInsideAssets(output))
+            {
+                error = "Output folder must be inside this project's Assets folder.";
+                return false;
+            }
+            if (output.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Pick a folder under Assets, not the Assets root. Organizing into Assets would scatter FBX, Materials, and 3.0 folders across the project.";
+                return false;
+            }
+            if (output.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Output folder cannot be inside Packages.";
+                return false;
+            }
+            return true;
         }
 
         public static string SanitizeFileName(string name)
@@ -441,68 +481,49 @@ namespace KaleidoVR.EditorTools
 
             try
             {
-                Debug.Log("[KaleidoVR] Running integrated avatar asset organization tool...");
-
-                EditorUtility.DisplayProgressBar("KaleidoVR Asset Organizer", "Analyzing avatar project hierarchy and dependencies...", 0.05f);
-
-                HashSet<string> fullyIgnoredAssetPaths = KaleidoAssetOrganizerHelpers.BuildRecursiveIgnoreMap(window.ignoreList);
-
-                string clearPrefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
-                EnsureSingleAssetDirectory(clearPrefabFolder);
-
-                int copied = 0, moved = 0, ignored = 0;
-                var flatObjects = KaleidoAssetOrganizerHelpers.GetAllObjectsIncludingChildren(window.objectsToOrganize, window.ignoreList);
-
-                List<UnityEngine.Object> assetsToScan = new List<UnityEngine.Object>();
-                foreach (var obj in flatObjects)
+                if (EditorApplication.isPlayingOrWillChangePlaymode)
                 {
-                    if (obj == null) continue;
-
-                    UnityEngine.Object targetAssetSource = obj;
-                    if (obj is GameObject go && PrefabUtility.IsPartOfAnyPrefab(go))
-                    {
-                        UnityEngine.Object source = SafeGetPrefabAssetSource(go);
-                        if (source != null) targetAssetSource = source;
-                    }
-
-                    string assetPath = AssetDatabase.GetAssetPath(targetAssetSource);
-                    if (!string.IsNullOrEmpty(assetPath))
-                    {
-                        UnityEngine.Object mainAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
-                        if (mainAsset != null && !assetsToScan.Contains(mainAsset)) assetsToScan.Add(mainAsset);
-                    }
-                    else
-                    {
-                        if (!assetsToScan.Contains(targetAssetSource)) assetsToScan.Add(targetAssetSource);
-                    }
-                }
-
-                if (assetsToScan.Count == 0)
-                {
-                    logEntries.Add("No objects were found on the organize list.");
-                    Debug.LogWarning("[KaleidoVR] Nothing to organize. Drop an avatar FBX, prefab, or scene object into the list.");
+                    EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Exit Play Mode before organizing assets.", "OK");
                     return;
                 }
 
-                HashSet<UnityEngine.Object> dependencySet = new HashSet<UnityEngine.Object>();
-                foreach (UnityEngine.Object collected in EditorUtility.CollectDependencies(assetsToScan.ToArray()))
+                if (!KaleidoAssetOrganizerHelpers.TryNormalizeOutputDirectory(window.outputDirectory, out string outputDirectory, out string outputError))
                 {
-                    if (collected != null) dependencySet.Add(collected);
+                    EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", outputError, "OK");
+                    return;
                 }
-                foreach (UnityEngine.Object scanned in assetsToScan)
-                {
-                    string scannedPath = AssetDatabase.GetAssetPath(scanned);
-                    if (string.IsNullOrEmpty(scannedPath)) continue;
-                    foreach (string depPath in AssetDatabase.GetDependencies(scannedPath, true))
-                    {
-                        UnityEngine.Object depAsset = AssetDatabase.LoadMainAssetAtPath(depPath);
-                        if (depAsset != null) dependencySet.Add(depAsset);
-                    }
-                }
-                UnityEngine.Object[] dependencies = new UnityEngine.Object[dependencySet.Count];
-                dependencySet.CopyTo(dependencies);
+                window.outputDirectory = outputDirectory;
+                window.SaveEditorPreferences();
 
-                int totalAssets = Mathf.Max(1, dependencies.Length);
+                Debug.Log("[KaleidoVR] Running integrated avatar asset organization tool...");
+
+                EditorUtility.DisplayProgressBar("KaleidoVR Asset Organizer", "Preparing output folders...", 0.02f);
+
+                HashSet<string> fullyIgnoredAssetPaths = KaleidoAssetOrganizerHelpers.BuildRecursiveIgnoreMap(window.ignoreList);
+
+                if (!PrepareOutputFolders(outputDirectory, window.autoParsePoiyomi, logEntries))
+                {
+                    EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Could not create the output folder tree inside Assets. Check the Console and pick another folder.", "OK");
+                    return;
+                }
+
+                int copied = 0, moved = 0, ignored = 0;
+                HashSet<string> projectAssetPaths = CollectProjectAssetPaths(window.objectsToOrganize, window.ignoreList, logEntries);
+
+                if (projectAssetPaths.Count == 0)
+                {
+                    logEntries.Add("No project assets were found on the selected objects.");
+                    EditorUtility.DisplayDialog(
+                        "KaleidoVR Asset Organizer",
+                        "The selected Hierarchy object did not resolve to any project assets.\n\nDrop the avatar's FBX or prefab from the Project window, or a scene instance that still has a prefab/model source.",
+                        "OK");
+                    return;
+                }
+
+                List<string> dependencies = new List<string>(projectAssetPaths);
+                dependencies.Sort(StringComparer.OrdinalIgnoreCase);
+
+                int totalAssets = Mathf.Max(1, dependencies.Count);
                 int currentAssetIndex = 0;
                 HashSet<string> processedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 // =========================================================================
@@ -512,22 +533,22 @@ namespace KaleidoVR.EditorTools
                 // unique-path checks work the same on 2022.3.22f1 and Unity 6.
                 // (AssetDatabase.AssetEditingScope is 2023.1+ only — do not use it here.)
 
-                foreach (var dep in dependencies)
+                foreach (string path in dependencies)
                 {
                     currentAssetIndex++;
-                    if (dep == null) continue;
-                    string path = AssetDatabase.GetAssetPath(dep);
                     if (string.IsNullOrEmpty(path)) continue;
 
                     float progressPercentage = (float)currentAssetIndex / totalAssets;
                     EditorUtility.DisplayProgressBar(
                         "KaleidoVR Asset Organizer",
-                        $"Batch Transferring Assets Safely ({currentAssetIndex}/{totalAssets}): {dep.name}",
+                        $"Batch Transferring Assets Safely ({currentAssetIndex}/{totalAssets}): {Path.GetFileName(path)}",
                         progressPercentage
                     );
 
                     if (processedPaths.Contains(path)) continue;
                     processedPaths.Add(path);
+
+                    if (AssetDatabase.IsValidFolder(path)) continue;
 
                     if (KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(path) || fullyIgnoredAssetPaths.Contains(path))
                     {
@@ -536,8 +557,15 @@ namespace KaleidoVR.EditorTools
                         continue;
                     }
 
+                    if (KaleidoAssetOrganizerHelpers.IsSameOrInside(path, window.outputDirectory))
+                    {
+                        movedAssetsMap[path] = path;
+                        logEntries.Add("Already in output: " + path);
+                        continue;
+                    }
+
                     UnityEngine.Object mainAsset = AssetDatabase.LoadMainAssetAtPath(path);
-                    string typeName = KaleidoAssetOrganizerHelpers.ResolveExportTypeName(path, mainAsset, dep);
+                    string typeName = KaleidoAssetOrganizerHelpers.ResolveExportTypeName(path, mainAsset, mainAsset);
 
                     string action = window.organizeOptions.ContainsKey(typeName) ? window.organizeOptions[typeName] : "Copy";
                     if (action == "Ignore")
@@ -549,7 +577,12 @@ namespace KaleidoVR.EditorTools
 
                     string targetFolder = KaleidoAssetOrganizerHelpers.GetTargetFolder(typeName, path, window.autoParsePoiyomi);
                     string localAssetFolder = $"{window.outputDirectory}/{targetFolder}".Replace("\\", "/");
-                    EnsureSingleAssetDirectory(localAssetFolder);
+                    if (!EnsureSingleAssetDirectory(localAssetFolder))
+                    {
+                        logEntries.Add("Folder create failed: " + localAssetFolder);
+                        Debug.LogWarning("[KaleidoVR] Could not create output folder: " + localAssetFolder);
+                        continue;
+                    }
 
                     string targetPath = $"{window.outputDirectory}/{targetFolder}/{Path.GetFileName(path)}".Replace("\\", "/");
                     if (path.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
@@ -670,16 +703,22 @@ namespace KaleidoVR.EditorTools
                         if (window.createPrefab)
                         {
                             string prefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
-                            EnsureSingleAssetDirectory(prefabFolder);
-                            string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
-                            if (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null)
+                            if (!EnsureSingleAssetDirectory(prefabFolder))
                             {
-                                prefabPath = AssetDatabase.GenerateUniqueAssetPath(prefabPath);
+                                logEntries.Add("Prefab folder create failed: " + prefabFolder);
                             }
-                            AssetDatabase.SaveAssets();
-                            PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
-                            savedPrefabPath = prefabPath;
-                            logEntries.Add("Prefab saved: " + prefabPath);
+                            else
+                            {
+                                string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
+                                if (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null)
+                                {
+                                    prefabPath = AssetDatabase.GenerateUniqueAssetPath(prefabPath);
+                                }
+                                AssetDatabase.SaveAssets();
+                                PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
+                                savedPrefabPath = prefabPath;
+                                logEntries.Add("Prefab saved: " + prefabPath);
+                            }
                         }
 
                         bool consumedWorkingRoot;
@@ -698,6 +737,13 @@ namespace KaleidoVR.EditorTools
                 }
                 Debug.Log($"[KaleidoVR] Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
                 logEntries.Add($"Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
+                if (copied == 0 && moved == 0)
+                {
+                    EditorUtility.DisplayDialog(
+                        "KaleidoVR Asset Organizer",
+                        "The folder tree was created, but no assets were copied or moved.\n\nCheck that the selected object references Project assets (FBX, prefab, materials) and that the output folder is not the same folder those assets already live in.",
+                        "OK");
+                }
             }
             catch (Exception ex)
             {
@@ -715,6 +761,165 @@ namespace KaleidoVR.EditorTools
                 {
                     Debug.LogWarning("[KaleidoVR] Could not write organizer log: " + logEx.Message);
                 }
+            }
+        }
+
+        private static HashSet<string> CollectProjectAssetPaths(List<UnityEngine.Object> selected, List<UnityEngine.Object> ignoreList, List<string> logEntries)
+        {
+            HashSet<string> assetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (selected == null) return assetPaths;
+
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null || (ignoreList != null && ignoreList.Contains(obj))) continue;
+
+                AddResolvedAssetPath(obj, assetPaths, logEntries);
+
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component component) go = component.gameObject;
+                if (go == null) continue;
+
+                string sourcePath = ResolveGameObjectAssetPath(go);
+                if (!string.IsNullOrEmpty(sourcePath))
+                {
+                    AddAssetPath(sourcePath, assetPaths);
+                    logEntries.Add("Resolved Hierarchy source: " + go.name + " -> " + sourcePath);
+                }
+
+                Component[] components = go.GetComponentsInChildren<Component>(true);
+                List<UnityEngine.Object> harvestTargets = new List<UnityEngine.Object> { go };
+                if (components != null)
+                {
+                    foreach (Component comp in components)
+                    {
+                        if (comp == null) continue;
+                        harvestTargets.Add(comp);
+                    }
+                }
+
+                foreach (UnityEngine.Object target in harvestTargets)
+                {
+                    HarvestSerializedAssetReferences(target, assetPaths);
+                }
+
+                try
+                {
+                    foreach (UnityEngine.Object collected in EditorUtility.CollectDependencies(harvestTargets.ToArray()))
+                    {
+                        AddResolvedAssetPath(collected, assetPaths, null);
+                    }
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            string[] seeds = new string[assetPaths.Count];
+            assetPaths.CopyTo(seeds);
+            foreach (string seedPath in seeds)
+            {
+                if (string.IsNullOrEmpty(seedPath) || KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(seedPath)) continue;
+                try
+                {
+                    foreach (string depPath in AssetDatabase.GetDependencies(seedPath, true))
+                    {
+                        AddAssetPath(depPath, assetPaths);
+                    }
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            logEntries.Add("Project assets resolved: " + assetPaths.Count);
+            return assetPaths;
+        }
+
+        private static string ResolveGameObjectAssetPath(GameObject go)
+        {
+            if (go == null) return null;
+
+            string path = AssetDatabase.GetAssetPath(go);
+            if (!string.IsNullOrEmpty(path)) return KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
+
+            try
+            {
+                path = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(go);
+                if (!string.IsNullOrEmpty(path)) return KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
+            }
+            catch (Exception)
+            {
+            }
+
+            UnityEngine.Object source = SafeGetPrefabAssetSource(go);
+            path = AssetDatabase.GetAssetPath(source);
+            if (!string.IsNullOrEmpty(path)) return KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
+
+            return null;
+        }
+
+        private static void AddResolvedAssetPath(UnityEngine.Object obj, HashSet<string> assetPaths, List<string> logEntries)
+        {
+            if (obj == null) return;
+
+            string path = AssetDatabase.GetAssetPath(obj);
+            if (string.IsNullOrEmpty(path) && obj is GameObject go)
+            {
+                path = ResolveGameObjectAssetPath(go);
+            }
+            else if (string.IsNullOrEmpty(path) && obj is Component component)
+            {
+                path = ResolveGameObjectAssetPath(component.gameObject);
+            }
+
+            if (string.IsNullOrEmpty(path) && obj is GameObject or Component)
+            {
+                UnityEngine.Object source = SafeGetPrefabAssetSource(obj);
+                path = AssetDatabase.GetAssetPath(source);
+            }
+
+            AddAssetPath(path, assetPaths);
+        }
+
+        private static void AddAssetPath(string path, HashSet<string> assetPaths)
+        {
+            path = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
+            if (string.IsNullOrEmpty(path)) return;
+            if (KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(path)) return;
+            if (!KaleidoAssetOrganizerHelpers.IsInsideAssets(path)) return;
+            assetPaths.Add(path);
+        }
+
+        private static void HarvestSerializedAssetReferences(UnityEngine.Object target, HashSet<string> assetPaths)
+        {
+            if (target == null) return;
+
+            AddResolvedAssetPath(target, assetPaths, null);
+
+            try
+            {
+                SerializedObject serializedObject = new SerializedObject(target);
+                SerializedProperty property = serializedObject.GetIterator();
+                bool enterChildren = true;
+                while (property.Next(enterChildren))
+                {
+                    enterChildren = true;
+                    try
+                    {
+                        if (property.propertyType != SerializedPropertyType.ObjectReference) continue;
+                        if (property.name == "m_Script") continue;
+                        UnityEngine.Object referenced = property.objectReferenceValue;
+                        if (referenced == null) continue;
+                        AddResolvedAssetPath(referenced, assetPaths, null);
+                    }
+                    catch (Exception)
+                    {
+                        enterChildren = false;
+                    }
+                }
+            }
+            catch (Exception)
+            {
             }
         }
 
@@ -750,8 +955,12 @@ namespace KaleidoVR.EditorTools
             string safeSceneName = KaleidoAssetOrganizerHelpers.SanitizeFileName(window.sceneName);
             if (string.IsNullOrEmpty(safeSceneName)) safeSceneName = "OrganizedScene";
 
-            string outputFolder = (window.outputDirectory ?? string.Empty).Replace("\\", "/");
-            EnsureSingleAssetDirectory(outputFolder);
+            string outputFolder = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(window.outputDirectory);
+            if (!EnsureSingleAssetDirectory(outputFolder))
+            {
+                logEntries.Add("Scene folder create failed: " + outputFolder);
+                return null;
+            }
 
             string scenePath = $"{outputFolder}/{safeSceneName}.unity";
             if (AssetDatabase.LoadMainAssetAtPath(scenePath) != null)
@@ -823,12 +1032,7 @@ namespace KaleidoVR.EditorTools
         {
             if (source == null) return null;
 
-            string oldAssetPath = AssetDatabase.GetAssetPath(source);
-            if (string.IsNullOrEmpty(oldAssetPath) && PrefabUtility.IsPartOfAnyPrefab(source))
-            {
-                UnityEngine.Object prefabSource = SafeGetPrefabAssetSource(source);
-                oldAssetPath = AssetDatabase.GetAssetPath(prefabSource);
-            }
+            string oldAssetPath = ResolveGameObjectAssetPath(source);
 
             if (!string.IsNullOrEmpty(oldAssetPath) && movedAssetsMap.TryGetValue(oldAssetPath, out string newPath))
             {
@@ -869,7 +1073,7 @@ namespace KaleidoVR.EditorTools
                 if (prefabInstance != null) return prefabInstance;
             }
 
-            string assetPath = AssetDatabase.GetAssetPath(source);
+            string assetPath = ResolveGameObjectAssetPath(source);
             if (!string.IsNullOrEmpty(assetPath))
             {
                 UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(assetPath);
@@ -1064,43 +1268,98 @@ namespace KaleidoVR.EditorTools
             catch (Exception ex) { Debug.LogWarning("[KaleidoVR] Reflection error: " + ex.Message); }
         }
 
-        public static void EnsureSingleAssetDirectory(string targetFolderPath)
+        private static bool PrepareOutputFolders(string outputDirectory, bool parsePoiyomi, List<string> logEntries)
         {
-            if (string.IsNullOrEmpty(targetFolderPath)) return;
+            List<string> folders = new List<string>
+            {
+                outputDirectory,
+                outputDirectory + "/FBX",
+                outputDirectory + "/Materials",
+                outputDirectory + "/Textures",
+                outputDirectory + "/Audio",
+                outputDirectory + "/Prefabs",
+                outputDirectory + "/Other",
+                outputDirectory + "/3.0",
+                outputDirectory + "/3.0/Animations",
+                outputDirectory + "/3.0/BlendTrees",
+                outputDirectory + "/3.0/Avatar Masks",
+                outputDirectory + "/3.0/Controllers",
+                outputDirectory + "/3.0/Menus",
+                outputDirectory + "/3.0/VRCExpressionParameters"
+            };
 
-            string normalized = targetFolderPath.Replace("\\", "/").TrimEnd('/');
-            string[] parts = normalized.Split('/');
-            if (parts.Length == 0 || !string.Equals(parts[0], "Assets", StringComparison.OrdinalIgnoreCase))
+            if (parsePoiyomi)
+            {
+                folders.Add(outputDirectory + "/Textures/Normals");
+                folders.Add(outputDirectory + "/Textures/Emissions");
+                folders.Add(outputDirectory + "/Textures/Metallic");
+                folders.Add(outputDirectory + "/Textures/Roughness");
+                folders.Add(outputDirectory + "/Textures/AO");
+            }
+
+            foreach (string folder in folders)
+            {
+                if (!EnsureSingleAssetDirectory(folder))
+                {
+                    logEntries.Add("Folder create failed: " + folder);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Create the exact folder path. Never use CreateFolder — if the name already
+        // exists on disk, Unity invents "Models 1", "Models 2", and so on.
+        public static bool EnsureSingleAssetDirectory(string targetFolderPath)
+        {
+            string normalized = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(targetFolderPath);
+            if (string.IsNullOrEmpty(normalized)) return false;
+
+            if (!KaleidoAssetOrganizerHelpers.IsInsideAssets(normalized))
             {
                 Debug.LogWarning("[KaleidoVR] Output folder must be inside Assets: " + targetFolderPath);
-                return;
+                return false;
             }
 
-            string absoluteDiskDirectory = Path.Combine(GetProjectRootPath(), normalized).Replace("\\", "/");
-            if (!Directory.Exists(absoluteDiskDirectory))
+            if (normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase)) return true;
+            if (AssetDatabase.IsValidFolder(normalized)) return true;
+
+            string projectRoot = GetProjectRootPath();
+            string assetsAbsolute = Path.GetFullPath(Path.Combine(projectRoot, "Assets"));
+            string folderAbsolute = Path.GetFullPath(Path.Combine(projectRoot, normalized.Replace('/', Path.DirectorySeparatorChar)));
+            string assetsPrefix = assetsAbsolute.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!folderAbsolute.StartsWith(assetsPrefix, StringComparison.OrdinalIgnoreCase))
             {
-                Directory.CreateDirectory(absoluteDiskDirectory);
+                Debug.LogWarning("[KaleidoVR] Refusing to create a folder outside Assets: " + normalized);
+                return false;
             }
 
-            if (AssetDatabase.IsValidFolder(normalized)) return;
+            if (!Directory.Exists(folderAbsolute))
+            {
+                Directory.CreateDirectory(folderAbsolute);
+            }
 
-            string current = parts[0];
+            string current = "Assets";
+            string[] parts = normalized.Split('/');
             for (int i = 1; i < parts.Length; i++)
             {
                 if (string.IsNullOrEmpty(parts[i])) continue;
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
+                current += "/" + parts[i];
+                if (AssetDatabase.IsValidFolder(current)) continue;
+
+                AssetDatabase.ImportAsset(current, ImportAssetOptions.ForceSynchronousImport);
+                if (!AssetDatabase.IsValidFolder(current))
                 {
-                    try
-                    {
-                        AssetDatabase.CreateFolder(current, parts[i]);
-                    }
-                    catch (Exception)
-                    {
-                    }
+                    AssetDatabase.Refresh();
                 }
-                current = next;
+                if (!AssetDatabase.IsValidFolder(current))
+                {
+                    Debug.LogWarning("[KaleidoVR] Could not register folder with Unity: " + current);
+                    return false;
+                }
             }
+
+            return AssetDatabase.IsValidFolder(normalized);
         }
     }
 }
@@ -1136,9 +1395,17 @@ namespace KaleidoVR.EditorTools
                 {
                     string dataPath = Application.dataPath.Replace("\\", "/");
                     string picked = path.Replace("\\", "/");
-                    if (picked.StartsWith(dataPath, StringComparison.OrdinalIgnoreCase))
+                    if (picked.Equals(dataPath, StringComparison.OrdinalIgnoreCase))
                     {
-                        window.outputDirectory = "Assets" + picked.Substring(dataPath.Length);
+                        EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Pick a folder under Assets, not the Assets root.", "OK");
+                    }
+                    else if (picked.StartsWith(dataPath + "/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        window.outputDirectory = KaleidoAssetOrganizerHelpers.NormalizeAssetPath("Assets" + picked.Substring(dataPath.Length));
+                    }
+                    else
+                    {
+                        EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Pick a folder inside this project's Assets folder.", "OK");
                     }
                 }
             }
