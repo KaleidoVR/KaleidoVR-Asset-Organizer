@@ -42,3 +42,9 @@ crashlytics-build.properties
 
 # Never ignore .meta files for tracked assets: they hold the GUIDs Unity uses
 # to link references, plus per-asset import settings.
+
+# Kaleido Launcher is a standalone OBS plugin tracked in its own repository at
+# github.com/KaleidoVR/Kaleido-Launcher, along with the bundle backing up its
+# pre-rewrite history.
+/Kaleido Launcher/
+/kaleido-launcher-pre-purge.bundle
