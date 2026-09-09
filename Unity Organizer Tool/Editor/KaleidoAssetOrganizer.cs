@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.3";
+        public static readonly string VERSION = "1.0.5";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -431,8 +431,52 @@ namespace KaleidoVR.EditorTools
             return typeName;
         }
 
+        public static string AliasOrganizeType(string typeName)
+        {
+            if (string.IsNullOrEmpty(typeName)) return typeName;
+            return typeName switch
+            {
+                "Sprite" => "Texture2D",
+                "Texture2DArray" => "Texture2D",
+                "Texture3D" => "Texture2D",
+                "RenderTexture" => "Texture2D",
+                "MovieTexture" => "Texture2D",
+                "RuntimeAnimatorController" => "AnimatorController",
+                _ => typeName
+            };
+        }
+
+        public static string InferTransferAction(Dictionary<string, string> options)
+        {
+            if (options == null) return "Ignore";
+            int copy = 0, move = 0;
+            foreach (KeyValuePair<string, string> kvp in options)
+            {
+                if (kvp.Key == "Shader" || kvp.Key == "MonoScript" || kvp.Key == "DefaultAsset") continue;
+                if (kvp.Value == "Move") move++;
+                else if (kvp.Value == "Copy") copy++;
+            }
+            if (move > 0 && copy == 0) return "Move";
+            if (copy > 0 && move == 0) return "Copy";
+            return "Ignore";
+        }
+
+        public static string ResolveOrganizeAction(Dictionary<string, string> options, string typeName)
+        {
+            if (options == null) return "Ignore";
+            string key = AliasOrganizeType(typeName);
+            if (!string.IsNullOrEmpty(key) && options.ContainsKey(key)) return options[key];
+            if (!string.IsNullOrEmpty(typeName) && options.ContainsKey(typeName)) return options[typeName];
+            return InferTransferAction(options);
+        }
+
         public static string GetTargetFolder(string typeName, string assetPath = "", bool parsePoiyomi = false)
         {
+            if (!string.IsNullOrEmpty(assetPath) && assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Prefabs";
+            }
+
             if (parsePoiyomi && typeName == "Texture2D" && !string.IsNullOrEmpty(assetPath))
             {
                 string lowerName = Path.GetFileNameWithoutExtension(assetPath).ToLowerInvariant();
@@ -478,6 +522,10 @@ namespace KaleidoVR.EditorTools
 
             List<string> logEntries = new List<string>() { "KaleidoVR Asset Organization Pipeline Began at " + DateTime.Now };
             Dictionary<string, string> movedAssetsMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, string> copiedAssetsMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> copiedDestinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<int> protectedInstanceIds = BuildProtectedInstanceIds(window.objectsToOrganize);
+            HashSet<string> protectedAssetPaths = BuildProtectedAssetPaths(window.objectsToOrganize);
 
             try
             {
@@ -567,7 +615,7 @@ namespace KaleidoVR.EditorTools
                     UnityEngine.Object mainAsset = AssetDatabase.LoadMainAssetAtPath(path);
                     string typeName = KaleidoAssetOrganizerHelpers.ResolveExportTypeName(path, mainAsset, mainAsset);
 
-                    string action = window.organizeOptions.ContainsKey(typeName) ? window.organizeOptions[typeName] : "Copy";
+                    string action = KaleidoAssetOrganizerHelpers.ResolveOrganizeAction(window.organizeOptions, typeName);
                     if (action == "Ignore")
                     {
                         ignored++;
@@ -575,7 +623,7 @@ namespace KaleidoVR.EditorTools
                         continue;
                     }
 
-                    string targetFolder = KaleidoAssetOrganizerHelpers.GetTargetFolder(typeName, path, window.autoParsePoiyomi);
+                    string targetFolder = KaleidoAssetOrganizerHelpers.GetTargetFolder(KaleidoAssetOrganizerHelpers.AliasOrganizeType(typeName), path, window.autoParsePoiyomi);
                     string localAssetFolder = $"{window.outputDirectory}/{targetFolder}".Replace("\\", "/");
                     if (!EnsureSingleAssetDirectory(localAssetFolder))
                     {
@@ -591,16 +639,17 @@ namespace KaleidoVR.EditorTools
                         continue;
                     }
 
-                    if (AssetDatabase.LoadMainAssetAtPath(targetPath) != null && !path.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
-                    }
-
                     if (action == "Copy")
                     {
+                        if (AssetDatabase.LoadMainAssetAtPath(targetPath) != null)
+                        {
+                            targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+                        }
                         if (AssetDatabase.CopyAsset(path, targetPath))
                         {
                             copied++;
+                            copiedAssetsMap[path] = targetPath;
+                            copiedDestinations.Add(targetPath);
                             movedAssetsMap[path] = targetPath;
                             logEntries.Add("Copied: " + path + " -> " + targetPath);
                         }
@@ -612,17 +661,17 @@ namespace KaleidoVR.EditorTools
                     }
                     else if (action == "Move")
                     {
-                        string moveError = AssetDatabase.MoveAsset(path, targetPath);
-                        if (string.IsNullOrEmpty(moveError))
+                        if (!TryMoveAsset(path, ref targetPath, logEntries))
                         {
-                            moved++;
-                            movedAssetsMap[path] = targetPath;
-                            logEntries.Add("Moved: " + path + " -> " + targetPath);
+                            logEntries.Add("Move failed: " + path);
+                            Debug.LogWarning("[KaleidoVR] MoveAsset failed for " + path);
                         }
                         else
                         {
-                            logEntries.Add("Move failed: " + path + " (" + moveError + ")");
-                            Debug.LogWarning("[KaleidoVR] MoveAsset failed for " + path + ": " + moveError);
+                            moved++;
+                            movedAssetsMap[path] = targetPath;
+                            processedPaths.Add(targetPath);
+                            logEntries.Add("Moved: " + path + " -> " + targetPath);
                         }
                     }
                 }
@@ -630,7 +679,9 @@ namespace KaleidoVR.EditorTools
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
 
-                RemapCopiedAssetReferences(movedAssetsMap);
+                // Only rewrite references on NEW copies. Moved files keep the same GUIDs,
+                // and the selected object must keep pointing at those same assets.
+                RemapCopiedAssetReferences(copiedAssetsMap, protectedAssetPaths);
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
                 // =========================================================================
@@ -654,7 +705,7 @@ namespace KaleidoVR.EditorTools
                     if (activeTargetGameObjects.Count == 1)
                     {
                         GameObject rootGo = ResolveOrganizedGameObject(activeTargetGameObjects[0], movedAssetsMap);
-                        finalTargetRoot = InstantiateForPrefab(rootGo);
+                        finalTargetRoot = InstantiateForPrefab(rootGo, protectedInstanceIds);
                         if (finalTargetRoot != null)
                         {
                             finalTargetRoot.name = safePrefabName;
@@ -667,7 +718,7 @@ namespace KaleidoVR.EditorTools
                         foreach (var go in activeTargetGameObjects)
                         {
                             GameObject targetGo = ResolveOrganizedGameObject(go, movedAssetsMap);
-                            GameObject instance = InstantiateForPrefab(targetGo);
+                            GameObject instance = InstantiateForPrefab(targetGo, protectedInstanceIds);
                             if (instance != null)
                             {
                                 instance.transform.SetParent(finalTargetRoot.transform);
@@ -676,7 +727,7 @@ namespace KaleidoVR.EditorTools
                         }
                     }
 
-                    if (finalTargetRoot != null)
+                    if (finalTargetRoot != null && !IsProtectedObject(finalTargetRoot, protectedInstanceIds))
                     {
                         if (PrefabUtility.IsPartOfPrefabInstance(finalTargetRoot))
                         {
@@ -685,7 +736,7 @@ namespace KaleidoVR.EditorTools
 
                         foreach (GameObject inst in instantiatedInstances)
                         {
-                            if (inst != null && inst != finalTargetRoot && PrefabUtility.IsPartOfPrefabInstance(inst))
+                            if (inst != null && inst != finalTargetRoot && !IsProtectedObject(inst, protectedInstanceIds) && PrefabUtility.IsPartOfPrefabInstance(inst))
                             {
                                 PrefabUtility.UnpackPrefabInstance(inst, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
                             }
@@ -694,8 +745,8 @@ namespace KaleidoVR.EditorTools
                         Component[] allComponents = finalTargetRoot.GetComponentsInChildren<Component>(true);
                         foreach (Component comp in allComponents)
                         {
-                            if (comp == null) continue;
-                            RemapSerializedReferences(comp, movedAssetsMap);
+                            if (comp == null || IsProtectedObject(comp, protectedInstanceIds)) continue;
+                            RemapSerializedReferences(comp, copiedAssetsMap);
                         }
 
                         if (window.autoSetupVRCDescriptor) ApplyVRCDescriptorSetup(finalTargetRoot, movedAssetsMap);
@@ -710,14 +761,31 @@ namespace KaleidoVR.EditorTools
                             else
                             {
                                 string prefabPath = $"{prefabFolder}/{safePrefabName}.prefab";
-                                if (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null)
+                                string transferredPrefab = FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
+                                bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
+                                bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
+
+                                if (transferredWasMoved)
                                 {
-                                    prefabPath = AssetDatabase.GenerateUniqueAssetPath(prefabPath);
+                                    // Move keeps the same GUID. Do not rewrite the prefab the selection still instances.
+                                    savedPrefabPath = transferredPrefab;
+                                    logEntries.Add("Using moved prefab without rewriting it: " + transferredPrefab);
                                 }
-                                AssetDatabase.SaveAssets();
-                                PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
-                                savedPrefabPath = prefabPath;
-                                logEntries.Add("Prefab saved: " + prefabPath);
+                                else
+                                {
+                                    if (transferredWasCopied)
+                                    {
+                                        prefabPath = transferredPrefab;
+                                    }
+                                    if (protectedAssetPaths.Contains(prefabPath) || (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null && !transferredWasCopied))
+                                    {
+                                        prefabPath = AssetDatabase.GenerateUniqueAssetPath($"{prefabFolder}/{safePrefabName}.prefab");
+                                    }
+                                    AssetDatabase.SaveAssets();
+                                    PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
+                                    savedPrefabPath = prefabPath;
+                                    logEntries.Add("Prefab saved: " + prefabPath);
+                                }
                             }
                         }
 
@@ -762,6 +830,116 @@ namespace KaleidoVR.EditorTools
                     Debug.LogWarning("[KaleidoVR] Could not write organizer log: " + logEx.Message);
                 }
             }
+        }
+
+        private static bool TryMoveAsset(string sourcePath, ref string targetPath, List<string> logEntries)
+        {
+            if (AssetDatabase.LoadMainAssetAtPath(targetPath) != null)
+            {
+                targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+            }
+
+            AssetDatabase.SaveAssets();
+            string moveError = AssetDatabase.MoveAsset(sourcePath, targetPath);
+            if (string.IsNullOrEmpty(moveError)) return true;
+
+            AssetDatabase.Refresh();
+            if (AssetDatabase.LoadMainAssetAtPath(targetPath) != null)
+            {
+                targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+            }
+
+            moveError = AssetDatabase.MoveAsset(sourcePath, targetPath);
+            if (string.IsNullOrEmpty(moveError)) return true;
+
+            logEntries.Add("Move failed: " + sourcePath + " (" + moveError + ")");
+            return false;
+        }
+
+        private static HashSet<int> BuildProtectedInstanceIds(List<UnityEngine.Object> selected)
+        {
+            HashSet<int> ids = new HashSet<int>();
+            if (selected == null) return ids;
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component component) go = component.gameObject;
+                if (go == null)
+                {
+                    ids.Add(obj.GetInstanceID());
+                    continue;
+                }
+                ids.Add(go.GetInstanceID());
+                Transform[] transforms = go.GetComponentsInChildren<Transform>(true);
+                if (transforms != null)
+                {
+                    foreach (Transform transform in transforms)
+                    {
+                        if (transform != null) ids.Add(transform.gameObject.GetInstanceID());
+                    }
+                }
+                Component[] components = go.GetComponentsInChildren<Component>(true);
+                if (components != null)
+                {
+                    foreach (Component component in components)
+                    {
+                        if (component != null) ids.Add(component.GetInstanceID());
+                    }
+                }
+            }
+            return ids;
+        }
+
+        private static HashSet<string> BuildProtectedAssetPaths(List<UnityEngine.Object> selected)
+        {
+            HashSet<string> paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (selected == null) return paths;
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component component) go = component.gameObject;
+                if (go != null)
+                {
+                    string path = ResolveGameObjectAssetPath(go);
+                    if (!string.IsNullOrEmpty(path)) paths.Add(path);
+                }
+                string direct = AssetDatabase.GetAssetPath(obj);
+                if (!string.IsNullOrEmpty(direct)) paths.Add(KaleidoAssetOrganizerHelpers.NormalizeAssetPath(direct));
+            }
+            return paths;
+        }
+
+        private static bool IsProtectedObject(UnityEngine.Object obj, HashSet<int> protectedInstanceIds)
+        {
+            return obj != null && protectedInstanceIds != null && protectedInstanceIds.Contains(obj.GetInstanceID());
+        }
+
+        private static bool IsProtectedAssetPath(string path, HashSet<string> protectedAssetPaths)
+        {
+            path = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
+            return !string.IsNullOrEmpty(path) && protectedAssetPaths != null && protectedAssetPaths.Contains(path);
+        }
+
+        private static string FindTransferredSourcePrefab(List<GameObject> roots, Dictionary<string, string> movedAssetsMap)
+        {
+            if (roots == null || movedAssetsMap == null) return null;
+            foreach (GameObject go in roots)
+            {
+                string sourcePath = ResolveGameObjectAssetPath(go);
+                if (string.IsNullOrEmpty(sourcePath) || !sourcePath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (movedAssetsMap.TryGetValue(sourcePath, out string destPath)
+                    && !string.IsNullOrEmpty(destPath)
+                    && destPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                {
+                    return destPath;
+                }
+            }
+            return null;
         }
 
         private static HashSet<string> CollectProjectAssetPaths(List<UnityEngine.Object> selected, List<UnityEngine.Object> ignoreList, List<string> logEntries)
@@ -1056,45 +1234,54 @@ namespace KaleidoVR.EditorTools
             }
         }
 
-        private static GameObject InstantiateForPrefab(GameObject source)
+        private static GameObject InstantiateForPrefab(GameObject source, HashSet<int> protectedInstanceIds)
         {
             if (source == null) return null;
 
+            GameObject instance = null;
             if (PrefabUtility.IsPartOfPrefabAsset(source))
             {
-                GameObject prefabInstance = TryInstantiatePrefab(source);
-                if (prefabInstance != null) return prefabInstance;
+                instance = TryInstantiatePrefab(source);
             }
 
-            if (PrefabUtility.IsPartOfPrefabInstance(source))
+            if (instance == null && PrefabUtility.IsPartOfPrefabInstance(source))
             {
                 UnityEngine.Object prefabAsset = SafeGetPrefabAssetSource(source);
-                GameObject prefabInstance = TryInstantiatePrefab(prefabAsset);
-                if (prefabInstance != null) return prefabInstance;
+                instance = TryInstantiatePrefab(prefabAsset);
             }
 
-            string assetPath = ResolveGameObjectAssetPath(source);
-            if (!string.IsNullOrEmpty(assetPath))
+            if (instance == null)
             {
-                UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(assetPath);
-                GameObject prefabInstance = TryInstantiatePrefab(main);
-                if (prefabInstance != null) return prefabInstance;
+                string assetPath = ResolveGameObjectAssetPath(source);
+                if (!string.IsNullOrEmpty(assetPath))
+                {
+                    UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(assetPath);
+                    instance = TryInstantiatePrefab(main);
+                }
             }
 
-            return UnityEngine.Object.Instantiate(source);
+            if (instance == null || IsProtectedObject(instance, protectedInstanceIds) || instance == source)
+            {
+                instance = UnityEngine.Object.Instantiate(source);
+            }
+
+            return instance;
         }
 
-        private static void RemapCopiedAssetReferences(Dictionary<string, string> movedAssetsMap)
+        private static void RemapCopiedAssetReferences(Dictionary<string, string> copiedAssetsMap, HashSet<string> protectedAssetPaths)
         {
-            HashSet<string> newPaths = new HashSet<string>(movedAssetsMap.Values, StringComparer.OrdinalIgnoreCase);
+            if (copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
+
+            HashSet<string> newPaths = new HashSet<string>(copiedAssetsMap.Values, StringComparer.OrdinalIgnoreCase);
             foreach (string newPath in newPaths)
             {
+                if (IsProtectedAssetPath(newPath, protectedAssetPaths)) continue;
                 UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath(newPath);
                 if (assets == null) continue;
                 foreach (UnityEngine.Object asset in assets)
                 {
                     if (asset == null) continue;
-                    RemapSerializedReferences(asset, movedAssetsMap);
+                    RemapSerializedReferences(asset, copiedAssetsMap);
                 }
             }
         }
