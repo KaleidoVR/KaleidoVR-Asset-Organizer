@@ -1,7 +1,8 @@
 // =========================================================================
 // BLOCK 1: GLOBAL ENGINE DIRECTIVES & ROOT MODULE CONFIGURATION
 // KaleidoVR Asset Organizer
-// https://kalivr.com
+// Created by KaleidoVR - https://kalivr.com
+// Copyright (c) 2026 KaleidoVR. Released under the MIT License.
 // Compatible with Unity 2022.3.22f1 through Unity 6 (6000.x)
 // VRChat SDK3 Avatars optional (Auto-Link FX & Menu)
 // Uses 2022.3 LTS AssetDatabase/PrefabUtility APIs only (no 2023+/Unity 6-only types)

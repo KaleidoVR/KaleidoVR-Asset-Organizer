@@ -83,11 +83,13 @@ The **Scene Name** field is reserved and currently unused; the pipeline does not
 
 Prefab generation expects the avatar root as a single object. Dropping several root objects nests them all under one new parent named after **Prefab Name**.
 
-## Links
+## Credits
+
+Created and maintained by **KaleidoVR**.
 
 - [kalivr.com](https://kalivr.com)
 - [Discord](https://discord.com/invite/cRsufJssTA)
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — Copyright (c) 2026 KaleidoVR
