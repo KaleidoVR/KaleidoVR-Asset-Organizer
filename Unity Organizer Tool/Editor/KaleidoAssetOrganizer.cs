@@ -22,7 +22,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.11";
+        public static readonly string VERSION = "1.0.12";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -1258,6 +1258,9 @@ namespace KaleidoVR.EditorTools
                     sceneInstance.name = string.IsNullOrEmpty(safePrefabName) ? safeSceneName : safePrefabName;
                 }
 
+                AddOrganizedSceneCamera(organizedScene);
+                AddOrganizedSceneLight(organizedScene);
+
                 if (!EditorSceneManager.SaveScene(organizedScene, scenePath))
                 {
                     logEntries.Add("Scene save failed: " + scenePath);
@@ -1281,6 +1284,116 @@ namespace KaleidoVR.EditorTools
                     EditorSceneManager.CloseScene(organizedScene, true);
                 }
             }
+        }
+
+        private static void AddOrganizedSceneCamera(Scene scene)
+        {
+            if (!scene.IsValid()) return;
+
+            GameObject camGo = new GameObject("Main Camera");
+            EditorSceneManager.MoveGameObjectToScene(camGo, scene);
+            camGo.tag = "MainCamera";
+            camGo.layer = 0;
+            camGo.isStatic = false;
+            camGo.transform.SetPositionAndRotation(new Vector3(0f, 0.71f, 17.73f), Quaternion.Euler(0f, 180f, 0f));
+            camGo.transform.localScale = Vector3.one;
+
+            Camera camera = camGo.AddComponent<Camera>();
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            camera.cullingMask = ~0;
+            camera.orthographic = false;
+            camera.usePhysicalProperties = false;
+            camera.fieldOfView = 5f;
+            camera.nearClipPlane = 0.3f;
+            camera.farClipPlane = 1000f;
+            camera.rect = new Rect(0f, 0f, 1f, 1f);
+            camera.depth = -1f;
+            camera.renderingPath = RenderingPath.UsePlayerSettings;
+            camera.targetTexture = null;
+            camera.useOcclusionCulling = true;
+            camera.allowDynamicResolution = false;
+            camera.targetDisplay = 0;
+            camera.stereoTargetEye = StereoTargetEyeMask.Both;
+            camera.enabled = true;
+
+            SerializedObject cameraSo = new SerializedObject(camera);
+            SetSerializedEnum(cameraSo, "m_FOVAxisMode", 0);
+            SetSerializedIntOrBool(cameraSo, "m_HDR", 2, true);
+            SetSerializedIntOrBool(cameraSo, "m_AllowMSAA", 2, true);
+            SetSerializedFloat(cameraSo, "m_StereoSeparation", 0.022f);
+            SetSerializedFloat(cameraSo, "m_StereoConvergence", 10f);
+            cameraSo.ApplyModifiedPropertiesWithoutUndo();
+
+            AudioListener listener = camGo.AddComponent<AudioListener>();
+            listener.enabled = true;
+        }
+
+        private static void AddOrganizedSceneLight(Scene scene)
+        {
+            if (!scene.IsValid()) return;
+
+            GameObject lightGo = new GameObject("Directional Light");
+            EditorSceneManager.MoveGameObjectToScene(lightGo, scene);
+            lightGo.tag = "Untagged";
+            lightGo.layer = 0;
+            lightGo.isStatic = false;
+            lightGo.transform.SetPositionAndRotation(new Vector3(0f, 3f, 0f), Quaternion.Euler(50f, -30f, 0f));
+            lightGo.transform.localScale = Vector3.one;
+
+            Light light = lightGo.AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.useColorTemperature = false;
+            light.color = Color.white;
+            light.lightmapBakeType = LightmapBakeType.Realtime;
+            light.intensity = 1f;
+            light.bounceIntensity = 1f;
+            light.shadows = LightShadows.Soft;
+            light.shadowStrength = 1f;
+            light.shadowResolution = LightShadowResolution.FromQualitySettings;
+            light.shadowBias = 0.05f;
+            light.shadowNormalBias = 0.4f;
+            light.shadowNearPlane = 0.2f;
+            light.cookie = null;
+            light.cookieSize = 10f;
+            light.flare = null;
+            light.renderMode = LightRenderMode.Auto;
+            light.cullingMask = ~0;
+            light.enabled = true;
+
+            SerializedObject lightSo = new SerializedObject(light);
+            SetSerializedBool(lightSo, "m_DrawHalo", false);
+            lightSo.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static void SetSerializedEnum(SerializedObject so, string propertyName, int value)
+        {
+            if (so == null) return;
+            SerializedProperty property = so.FindProperty(propertyName);
+            if (property != null) property.intValue = value;
+        }
+
+        private static void SetSerializedFloat(SerializedObject so, string propertyName, float value)
+        {
+            if (so == null) return;
+            SerializedProperty property = so.FindProperty(propertyName);
+            if (property != null) property.floatValue = value;
+        }
+
+        private static void SetSerializedBool(SerializedObject so, string propertyName, bool value)
+        {
+            if (so == null) return;
+            SerializedProperty property = so.FindProperty(propertyName);
+            if (property != null) property.boolValue = value;
+        }
+
+        private static void SetSerializedIntOrBool(SerializedObject so, string propertyName, int intValue, bool boolValue)
+        {
+            if (so == null) return;
+            SerializedProperty property = so.FindProperty(propertyName);
+            if (property == null) return;
+            if (property.propertyType == SerializedPropertyType.Boolean) property.boolValue = boolValue;
+            else property.intValue = intValue;
         }
 
         private static string GetProjectRootPath()

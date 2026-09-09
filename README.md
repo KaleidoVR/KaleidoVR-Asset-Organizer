@@ -4,7 +4,7 @@ A Unity editor tool that sorts the assets of a VRChat avatar into a consistent f
 
 Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its meshes, materials, textures, animations, controllers, menus, and parameters are collected and filed into one output folder.
 
-- Version **1.0.11**
+- Version **1.0.12**
 - Unity **2022.3.22f1** or newer, including Unity 6 (6000.x)
 - VRChat SDK3 Avatars is optional
 
