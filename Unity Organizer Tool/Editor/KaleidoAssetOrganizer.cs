@@ -21,7 +21,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.1.4";
+        public static readonly string VERSION = "1.1.5";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -57,8 +57,8 @@ namespace KaleidoVR.EditorTools
             {"BlendTree", "Copy"},
             {"AnimationClip", "Copy"},
             {"AnimatorOverrideController", "Copy"},
-            {"AnimatorController", "Copy"},        // FIXED: Explicitly mapped for native Unity .controller files
-            {"RuntimeAnimatorController", "Copy"}, // FIXED: Explicitly mapped for runtime controller asset references
+            {"AnimatorController", "Copy"},
+            {"RuntimeAnimatorController", "Copy"},
             {"AvatarMask", "Copy"},
             {"AudioClip", "Copy"},
             {"Shader", "Ignore"},
@@ -66,7 +66,7 @@ namespace KaleidoVR.EditorTools
             {"DefaultAsset", "Ignore"}
         };
 
-        [MenuItem("KaleidoVR/Asset Organizer")]
+        [MenuItem("KaleidoVR/Asset Organizer", false, 100)]
         public static void ShowWindow()
         {
             var window = GetWindow<KaleidoAssetOrganizer>("Asset Organizer");
@@ -462,7 +462,6 @@ namespace KaleidoVR.EditorTools
                 if (lowerName.Contains("ao") || lowerName.Contains("occlusion")) return "Textures/AO";
             }
 
-            // FIXED: Standardized type routing names so Animators route consistently into '3.0/Controllers' or 'Other' as intended
             return typeName switch
             {
                 "GameObject" => "FBX",
@@ -3481,7 +3480,6 @@ namespace KaleidoVR.EditorTools
                     if (evt.type == EventType.DragPerform)
                     {
                         DragAndDrop.AcceptDrag();
-                        // FIXED: Grab index 0 item from the drag array reference to fix the variable mapping mismatch
                         if (DragAndDrop.objectReferences.Length > 0)
                         {
                             window.objectsToOrganize[i] = DragAndDrop.objectReferences[0];
@@ -3564,7 +3562,6 @@ namespace KaleidoVR.EditorTools
                     if (evt.type == EventType.DragPerform)
                     {
                         DragAndDrop.AcceptDrag();
-                        // FIXED: Grab index 0 item from the drag array reference to prevent structural mapping crashes
                         if (DragAndDrop.objectReferences.Length > 0)
                         {
                             window.ignoreList[i] = DragAndDrop.objectReferences[0];

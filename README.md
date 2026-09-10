@@ -16,7 +16,7 @@ Drop an avatar FBX or prefab into the window, press **Organize Assets**, and its
 
 ## Install
 
-1. Download the latest `.unitypackage` from [Releases](https://github.com/KaleidoVR/KaleidoVR-Asset-Organizer/releases).
+1. Download the latest `.unitypackage` from [Releases](https://github.com/KaleidoVR/Asset-Organizer/releases).
 2. In Unity, choose **Assets > Import Package > Custom Package...** and select the file.
 3. Import everything. Files land in `Assets/KaleidoVR/Editor/`.
 4. Open the tool from the menu bar: **KaleidoVR > Asset Organizer**.
