@@ -24,7 +24,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.1.0";
+        public static readonly string VERSION = "1.1.1";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -535,6 +535,7 @@ namespace KaleidoVR.EditorTools
             HashSet<string> originalsToDeleteAfterMove = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<int> protectedInstanceIds = BuildProtectedInstanceIds(window.objectsToOrganize);
             HashSet<string> protectedAssetPaths = BuildProtectedAssetPaths(window.objectsToOrganize);
+            HashSet<string> poiyomiUnlockedToRelock = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
@@ -626,13 +627,6 @@ namespace KaleidoVR.EditorTools
                         continue;
                     }
 
-                    if (KaleidoAssetOrganizerHelpers.IsSameOrInside(path, window.outputDirectory))
-                    {
-                        movedAssetsMap[path] = path;
-                        logEntries.Add("Already in output: " + path);
-                        continue;
-                    }
-
                     UnityEngine.Object mainAsset = AssetDatabase.LoadMainAssetAtPath(path);
                     string typeName = KaleidoAssetOrganizerHelpers.ResolveExportTypeName(path, mainAsset, mainAsset);
 
@@ -644,61 +638,40 @@ namespace KaleidoVR.EditorTools
                         continue;
                     }
 
-                    string targetFolder = KaleidoAssetOrganizerHelpers.GetTargetFolder(KaleidoAssetOrganizerHelpers.AliasOrganizeType(typeName), path, window.autoParsePoiyomi);
-                    string localAssetFolder = $"{window.outputDirectory}/{targetFolder}".Replace("\\", "/");
-                    if (!EnsureSingleAssetDirectory(localAssetFolder))
+                    // A dependency already in this output folder is a previous sort.
+                    // Copy it to a unique path and never delete it, so this run stays isolated.
+                    if (KaleidoAssetOrganizerHelpers.IsSameOrInside(path, window.outputDirectory))
                     {
-                        logEntries.Add("Folder create failed: " + localAssetFolder);
-                        Debug.LogWarning("[KaleidoVR] Could not create output folder: " + localAssetFolder);
+                        if (!TryCopyOrganizedAsset(path, window.outputDirectory, typeName, window.autoParsePoiyomi, copiedAssetsMap, copiedDestinations, movedAssetsMap, processedPaths, logEntries, "Isolated copy from existing organized file"))
+                        {
+                            movedAssetsMap[path] = path;
+                            logEntries.Add("Already in output: " + path);
+                        }
+                        else
+                        {
+                            copied++;
+                        }
                         continue;
-                    }
-
-                    string targetPath = $"{window.outputDirectory}/{targetFolder}/{Path.GetFileName(path)}".Replace("\\", "/");
-                    if (path.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        movedAssetsMap[path] = path;
-                        continue;
-                    }
-
-                    if (action == "Copy"
-                        && KaleidoAssetOrganizerHelpers.InferTransferAction(window.organizeOptions) == "Move")
-                    {
-                        action = "Move";
                     }
 
                     if (action == "Copy" || action == "Move")
                     {
-                        if (AssetDatabase.LoadMainAssetAtPath(targetPath) != null)
+                        // Both modes copy so the output always has new GUIDs. Move deletes
+                        // the source files later, after remaining references are retargeted.
+                        if (!TryCopyOrganizedAsset(path, window.outputDirectory, typeName, window.autoParsePoiyomi, copiedAssetsMap, copiedDestinations, movedAssetsMap, processedPaths, logEntries, action == "Move" ? "Moved" : "Copied"))
                         {
-                            targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+                            Debug.LogWarning("[KaleidoVR] " + action + " failed for " + path);
+                            continue;
                         }
 
-                        // Both modes copy so the output always has new GUIDs. Move deletes
-                        // the source files later, after the original object is retargeted.
-                        if (AssetDatabase.CopyAsset(path, targetPath))
+                        if (action == "Move")
                         {
-                            copiedAssetsMap[path] = targetPath;
-                            copiedDestinations.Add(targetPath);
-                            movedAssetsMap[path] = targetPath;
-                            processedPaths.Add(targetPath);
-                            if (IsModelFile(targetPath)) RemapModelImporterMaterials(targetPath, logEntries);
-
-                            if (action == "Move")
-                            {
-                                moved++;
-                                originalsToDeleteAfterMove.Add(path);
-                                logEntries.Add("Moved: " + path + " -> " + targetPath);
-                            }
-                            else
-                            {
-                                copied++;
-                                logEntries.Add("Copied: " + path + " -> " + targetPath);
-                            }
+                            moved++;
+                            originalsToDeleteAfterMove.Add(path);
                         }
                         else
                         {
-                            logEntries.Add(action + " failed: " + path);
-                            Debug.LogWarning("[KaleidoVR] " + action + " failed for " + path);
+                            copied++;
                         }
                     }
                 }
@@ -707,8 +680,8 @@ namespace KaleidoVR.EditorTools
                 AssetDatabase.Refresh();
 
                 // Unlock copied Poiyomi materials before remapping so texture slots can
-                // follow the new files. Leave them unlocked; VRChat/Poiyomi lock on upload.
-                UnlockPoiyomiMaterialsAtPaths(copiedAssetsMap.Values, logEntries);
+                // follow the new files. Re-lock every material we unlocked after organize.
+                UnlockPoiyomiMaterialsAtPaths(copiedAssetsMap.Values, poiyomiUnlockedToRelock, logEntries);
 
                 // Copy and Move both land as new-GUID files. Remap those copies onto each other
                 // before the originals are deleted.
@@ -847,11 +820,14 @@ namespace KaleidoVR.EditorTools
                 }
                 Debug.Log($"[KaleidoVR] Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
                 logEntries.Add($"Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
-                HashSet<string> leftoverPoiyomiToRelock = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                // Copy never writes outside this run's new files. Move retargets every
+                // remaining project/scene reference (including earlier organize folders)
+                // so those copies follow the new files before the sources are deleted.
                 if (originalsToDeleteAfterMove.Count > 0)
                 {
                     Dictionary<string, string> movedOnlyMap = BuildMovedOnlyMap(copiedAssetsMap, originalsToDeleteAfterMove);
-                    RetargetLeftoverSourceAssets(window.objectsToOrganize, copiedAssetsMap, movedOnlyMap, originalsToDeleteAfterMove, protectedAssetPaths, leftoverPoiyomiToRelock, logEntries);
+                    RetargetProjectReferencesToMovedAssets(window.objectsToOrganize, copiedAssetsMap, movedOnlyMap, originalsToDeleteAfterMove, protectedAssetPaths, poiyomiUnlockedToRelock, logEntries);
+                    RetargetLoadedScenesToMovedAssets(movedOnlyMap, logEntries);
                     RetargetOriginalsToNewAssets(window.objectsToOrganize, movedOnlyMap, originalsToDeleteAfterMove, logEntries);
                 }
                 if (window.renameOldAndNewObjects)
@@ -860,11 +836,16 @@ namespace KaleidoVR.EditorTools
                 }
                 OrderSelectedScenesCameraLightAboveAvatars(window.objectsToOrganize);
                 AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                KeepMovedSourcesIfStillReferenced(originalsToDeleteAfterMove, copiedDestinations, logEntries);
                 DeleteMovedSourceAssets(originalsToDeleteAfterMove, window.outputDirectory, logEntries);
                 RemoveEmptyOutputFolders(window.outputDirectory, logEntries);
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
-                RelockOriginalPoiyomiMaterials(leftoverPoiyomiToRelock, logEntries);
+                if (RelockPoiyomiMaterials(poiyomiUnlockedToRelock, logEntries))
+                {
+                    poiyomiUnlockedToRelock.Clear();
+                }
                 RevealOutputDirectory(window.outputDirectory);
 
                 if (copied == 0 && moved == 0)
@@ -882,6 +863,11 @@ namespace KaleidoVR.EditorTools
             }
             finally
             {
+                if (poiyomiUnlockedToRelock.Count > 0)
+                {
+                    RelockPoiyomiMaterials(poiyomiUnlockedToRelock, logEntries);
+                    poiyomiUnlockedToRelock.Clear();
+                }
                 EditorUtility.ClearProgressBar();
                 try
                 {
@@ -891,6 +877,176 @@ namespace KaleidoVR.EditorTools
                 {
                     Debug.LogWarning("[KaleidoVR] Could not write organizer log: " + logEx.Message);
                 }
+            }
+        }
+
+        private static bool TryCopyOrganizedAsset(
+            string path,
+            string outputDirectory,
+            string typeName,
+            bool parsePoiyomi,
+            Dictionary<string, string> copiedAssetsMap,
+            HashSet<string> copiedDestinations,
+            Dictionary<string, string> movedAssetsMap,
+            HashSet<string> processedPaths,
+            List<string> logEntries,
+            string logPrefix)
+        {
+            string targetFolder = KaleidoAssetOrganizerHelpers.GetTargetFolder(
+                KaleidoAssetOrganizerHelpers.AliasOrganizeType(typeName), path, parsePoiyomi);
+            string localAssetFolder = $"{outputDirectory}/{targetFolder}".Replace("\\", "/");
+            if (!EnsureSingleAssetDirectory(localAssetFolder))
+            {
+                if (logEntries != null) logEntries.Add("Folder create failed: " + localAssetFolder);
+                Debug.LogWarning("[KaleidoVR] Could not create output folder: " + localAssetFolder);
+                return false;
+            }
+
+            string targetPath = $"{outputDirectory}/{targetFolder}/{Path.GetFileName(path)}".Replace("\\", "/");
+            if (path.Equals(targetPath, StringComparison.OrdinalIgnoreCase)
+                || AssetDatabase.LoadMainAssetAtPath(targetPath) != null)
+            {
+                targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+            }
+
+            if (!AssetDatabase.CopyAsset(path, targetPath))
+            {
+                if (logEntries != null) logEntries.Add(logPrefix + " failed: " + path);
+                return false;
+            }
+
+            copiedAssetsMap[path] = targetPath;
+            copiedDestinations.Add(targetPath);
+            movedAssetsMap[path] = targetPath;
+            processedPaths.Add(targetPath);
+            if (IsModelFile(targetPath)) RemapModelImporterMaterials(targetPath, logEntries);
+            if (logEntries != null) logEntries.Add(logPrefix + ": " + path + " -> " + targetPath);
+            return true;
+        }
+
+        private static void KeepMovedSourcesIfStillReferenced(
+            HashSet<string> originalsToDelete,
+            HashSet<string> copiedDestinations,
+            List<string> logEntries)
+        {
+            if (originalsToDelete == null || originalsToDelete.Count == 0) return;
+
+            HashSet<string> stillReferenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            CollectDiskReferencesToMovedSources(originalsToDelete, copiedDestinations, stillReferenced);
+            CollectLoadedSceneReferencesToMovedSources(originalsToDelete, stillReferenced);
+
+            if (stillReferenced.Count == 0) return;
+
+            foreach (string path in stillReferenced)
+            {
+                if (!originalsToDelete.Remove(path)) continue;
+                if (logEntries != null) logEntries.Add("Kept moved source still referenced by another organize or asset: " + path);
+            }
+        }
+
+        private static void CollectDiskReferencesToMovedSources(
+            HashSet<string> originalsToDelete,
+            HashSet<string> copiedDestinations,
+            HashSet<string> stillReferenced)
+        {
+            string[] objectGuids = AssetDatabase.FindAssets("t:Object", new[] { "Assets" });
+            string[] sceneGuids = AssetDatabase.FindAssets("t:Scene", new[] { "Assets" });
+            string[] guids = new string[objectGuids.Length + sceneGuids.Length];
+            objectGuids.CopyTo(guids, 0);
+            sceneGuids.CopyTo(guids, objectGuids.Length);
+
+            for (int i = 0; i < guids.Length; i++)
+            {
+                string path = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(AssetDatabase.GUIDToAssetPath(guids[i]));
+                if (string.IsNullOrEmpty(path) || AssetDatabase.IsValidFolder(path)) continue;
+                if (KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(path)) continue;
+                if (originalsToDelete.Contains(path)) continue;
+                if (copiedDestinations != null && copiedDestinations.Contains(path)) continue;
+                if (!AssetReferencesMovedFiles(path, originalsToDelete)) continue;
+
+                try
+                {
+                    foreach (string depPath in AssetDatabase.GetDependencies(path, true))
+                    {
+                        if (!string.IsNullOrEmpty(depPath) && originalsToDelete.Contains(depPath))
+                        {
+                            stillReferenced.Add(depPath);
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+
+        private static void CollectLoadedSceneReferencesToMovedSources(
+            HashSet<string> originalsToDelete,
+            HashSet<string> stillReferenced)
+        {
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                Scene scene = SceneManager.GetSceneAt(i);
+                if (!scene.IsValid() || !scene.isLoaded) continue;
+                GameObject[] roots = scene.GetRootGameObjects();
+                if (roots == null) continue;
+                foreach (GameObject root in roots)
+                {
+                    CollectObjectTreeReferencesToMovedSources(root, originalsToDelete, stillReferenced);
+                }
+            }
+        }
+
+        private static void CollectObjectTreeReferencesToMovedSources(
+            GameObject root,
+            HashSet<string> originalsToDelete,
+            HashSet<string> stillReferenced)
+        {
+            if (root == null) return;
+            CollectSerializedReferencesToMovedSources(root, originalsToDelete, stillReferenced);
+            Component[] components = root.GetComponentsInChildren<Component>(true);
+            if (components == null) return;
+            foreach (Component comp in components)
+            {
+                if (comp != null) CollectSerializedReferencesToMovedSources(comp, originalsToDelete, stillReferenced);
+            }
+        }
+
+        private static void CollectSerializedReferencesToMovedSources(
+            UnityEngine.Object target,
+            HashSet<string> originalsToDelete,
+            HashSet<string> stillReferenced)
+        {
+            if (target == null || originalsToDelete == null || originalsToDelete.Count == 0) return;
+
+            try
+            {
+                SerializedObject serializedObject = new SerializedObject(target);
+                SerializedProperty property = serializedObject.GetIterator();
+                bool enterChildren = true;
+                while (property.Next(enterChildren))
+                {
+                    enterChildren = true;
+                    try
+                    {
+                        if (property.propertyType != SerializedPropertyType.ObjectReference) continue;
+                        if (property.name == "m_Script") continue;
+                        UnityEngine.Object referenced = property.objectReferenceValue;
+                        if (referenced == null || IsHierarchyReference(referenced)) continue;
+                        string referencedPath = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(AssetDatabase.GetAssetPath(referenced));
+                        if (!string.IsNullOrEmpty(referencedPath) && originalsToDelete.Contains(referencedPath))
+                        {
+                            stillReferenced.Add(referencedPath);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        enterChildren = false;
+                    }
+                }
+            }
+            catch (Exception)
+            {
             }
         }
 
@@ -1881,7 +2037,7 @@ namespace KaleidoVR.EditorTools
             return moved;
         }
 
-        private static void RetargetLeftoverSourceAssets(
+        private static void RetargetProjectReferencesToMovedAssets(
             List<UnityEngine.Object> selected,
             Dictionary<string, string> copiedAssetsMap,
             Dictionary<string, string> movedOnlyMap,
@@ -1893,38 +2049,8 @@ namespace KaleidoVR.EditorTools
             if (movedOnlyMap == null || movedOnlyMap.Count == 0) return;
             if (originalsToDelete == null || originalsToDelete.Count == 0) return;
 
-            HashSet<string> leftoverPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (copiedAssetsMap != null)
-            {
-                foreach (string sourcePath in copiedAssetsMap.Keys)
-                {
-                    if (string.IsNullOrEmpty(sourcePath) || originalsToDelete.Contains(sourcePath)) continue;
-                    leftoverPaths.Add(sourcePath);
-                }
-            }
-
-            AddRendererMaterialPaths(selected, leftoverPaths, originalsToDelete);
-
-            if (selected != null)
-            {
-                foreach (UnityEngine.Object obj in selected)
-                {
-                    if (obj == null) continue;
-                    GameObject go = obj as GameObject;
-                    if (go == null && obj is Component asComponent) go = asComponent.gameObject;
-                    if (go == null) continue;
-                    string prefabPath = null;
-                    try { prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(go); } catch (Exception) { }
-                    if (string.IsNullOrEmpty(prefabPath)) prefabPath = ResolveGameObjectAssetPath(go);
-                    if (!string.IsNullOrEmpty(prefabPath)
-                        && prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)
-                        && !originalsToDelete.Contains(prefabPath))
-                    {
-                        leftoverPaths.Add(prefabPath);
-                    }
-                }
-            }
-
+            HashSet<string> leftoverPaths = CollectAssetsThatReferenceMoved(
+                selected, copiedAssetsMap, originalsToDelete, movedOnlyMap, logEntries);
             if (leftoverPaths.Count == 0) return;
 
             List<Material> leftoverLocked = CollectLockedMaterialsAtPaths(leftoverPaths);
@@ -1959,6 +2085,11 @@ namespace KaleidoVR.EditorTools
             {
                 if (string.IsNullOrEmpty(path)) continue;
                 if (IsModelFile(path)) continue;
+                if (path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (RetargetSceneAssetToMovedAssets(path, movedOnlyMap, logEntries)) retargeted++;
+                    continue;
+                }
                 if (IsProtectedAssetPath(path, protectedAssetPaths) && !path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)) continue;
                 if (AssetDatabase.LoadMainAssetAtPath(path) == null) continue;
 
@@ -1999,16 +2130,191 @@ namespace KaleidoVR.EditorTools
             if (retargeted > 0)
             {
                 AssetDatabase.SaveAssets();
-                logEntries.Add("Retargeted leftover source assets to moved files: " + retargeted);
+                logEntries.Add("Retargeted project references to moved files: " + retargeted);
             }
         }
 
-        private static void RelockOriginalPoiyomiMaterials(HashSet<string> leftoverPoiyomiToRelock, List<string> logEntries)
+        private static HashSet<string> CollectAssetsThatReferenceMoved(
+            List<UnityEngine.Object> selected,
+            Dictionary<string, string> copiedAssetsMap,
+            HashSet<string> originalsToDelete,
+            Dictionary<string, string> movedOnlyMap,
+            List<string> logEntries)
         {
-            if (leftoverPoiyomiToRelock == null || leftoverPoiyomiToRelock.Count == 0) return;
+            HashSet<string> leftoverPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (copiedAssetsMap != null)
+            {
+                foreach (string sourcePath in copiedAssetsMap.Keys)
+                {
+                    if (string.IsNullOrEmpty(sourcePath) || originalsToDelete.Contains(sourcePath)) continue;
+                    leftoverPaths.Add(sourcePath);
+                }
+            }
 
-            List<Material> toLock = CollectMaterialsAtPaths(leftoverPoiyomiToRelock);
-            if (toLock.Count == 0) return;
+            AddRendererMaterialPaths(selected, leftoverPaths, originalsToDelete);
+
+            if (selected != null)
+            {
+                foreach (UnityEngine.Object obj in selected)
+                {
+                    if (obj == null) continue;
+                    GameObject go = obj as GameObject;
+                    if (go == null && obj is Component asComponent) go = asComponent.gameObject;
+                    if (go == null) continue;
+                    string prefabPath = null;
+                    try { prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(go); } catch (Exception) { }
+                    if (string.IsNullOrEmpty(prefabPath)) prefabPath = ResolveGameObjectAssetPath(go);
+                    if (!string.IsNullOrEmpty(prefabPath)
+                        && prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)
+                        && !originalsToDelete.Contains(prefabPath))
+                    {
+                        leftoverPaths.Add(prefabPath);
+                    }
+                }
+            }
+
+            HashSet<string> skipDestinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (movedOnlyMap != null)
+            {
+                foreach (string destPath in movedOnlyMap.Values)
+                {
+                    if (!string.IsNullOrEmpty(destPath)) skipDestinations.Add(destPath);
+                }
+            }
+
+            string[] objectGuids = AssetDatabase.FindAssets("t:Object", new[] { "Assets" });
+            string[] sceneGuids = AssetDatabase.FindAssets("t:Scene", new[] { "Assets" });
+            string[] guids = new string[objectGuids.Length + sceneGuids.Length];
+            objectGuids.CopyTo(guids, 0);
+            sceneGuids.CopyTo(guids, objectGuids.Length);
+            int total = Mathf.Max(1, guids.Length);
+            for (int i = 0; i < guids.Length; i++)
+            {
+                if ((i % 64) == 0)
+                {
+                    EditorUtility.DisplayProgressBar(
+                        "KaleidoVR Asset Organizer",
+                        "Finding assets that still reference moved files...",
+                        0.82f + (0.08f * i / total));
+                }
+
+                string path = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(AssetDatabase.GUIDToAssetPath(guids[i]));
+                if (string.IsNullOrEmpty(path) || AssetDatabase.IsValidFolder(path)) continue;
+                if (KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(path)) continue;
+                if (IsModelFile(path)) continue;
+                if (originalsToDelete.Contains(path) || skipDestinations.Contains(path)) continue;
+                if (!AssetReferencesMovedFiles(path, originalsToDelete)) continue;
+                leftoverPaths.Add(path);
+            }
+
+            if (logEntries != null)
+            {
+                logEntries.Add("Assets still referencing moved files: " + leftoverPaths.Count);
+            }
+            return leftoverPaths;
+        }
+
+        private static bool AssetReferencesMovedFiles(string path, HashSet<string> originalsToDelete)
+        {
+            if (string.IsNullOrEmpty(path) || originalsToDelete == null || originalsToDelete.Count == 0) return false;
+            try
+            {
+                foreach (string depPath in AssetDatabase.GetDependencies(path, true))
+                {
+                    if (!string.IsNullOrEmpty(depPath) && originalsToDelete.Contains(depPath)) return true;
+                }
+            }
+            catch (Exception)
+            {
+            }
+            return false;
+        }
+
+        private static void RetargetLoadedScenesToMovedAssets(Dictionary<string, string> movedOnlyMap, List<string> logEntries)
+        {
+            if (movedOnlyMap == null || movedOnlyMap.Count == 0) return;
+
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                Scene scene = SceneManager.GetSceneAt(i);
+                if (!scene.IsValid() || !scene.isLoaded) continue;
+                GameObject[] roots = scene.GetRootGameObjects();
+                if (roots == null) continue;
+                foreach (GameObject root in roots)
+                {
+                    if (root != null) RemapGameObjectTree(root, movedOnlyMap);
+                }
+                EditorSceneManager.MarkSceneDirty(scene);
+                if (logEntries != null && !string.IsNullOrEmpty(scene.path))
+                {
+                    logEntries.Add("Retargeted open scene references: " + scene.path);
+                }
+            }
+        }
+
+        private static bool RetargetSceneAssetToMovedAssets(string scenePath, Dictionary<string, string> movedOnlyMap, List<string> logEntries)
+        {
+            if (string.IsNullOrEmpty(scenePath) || movedOnlyMap == null || movedOnlyMap.Count == 0) return false;
+
+            bool alreadyLoaded = false;
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                Scene scene = SceneManager.GetSceneAt(i);
+                if (!scene.IsValid() || !string.Equals(scene.path, scenePath, StringComparison.OrdinalIgnoreCase)) continue;
+                alreadyLoaded = scene.isLoaded;
+                break;
+            }
+
+            if (alreadyLoaded)
+            {
+                return true;
+            }
+
+            Scene opened;
+            try
+            {
+                opened = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
+            }
+            catch (Exception ex)
+            {
+                if (logEntries != null) logEntries.Add("Could not open scene to retarget: " + scenePath + " (" + ex.Message + ")");
+                return false;
+            }
+
+            if (!opened.IsValid() || !opened.isLoaded)
+            {
+                if (logEntries != null) logEntries.Add("Could not open scene to retarget: " + scenePath);
+                return false;
+            }
+
+            try
+            {
+                GameObject[] roots = opened.GetRootGameObjects();
+                if (roots != null)
+                {
+                    foreach (GameObject root in roots)
+                    {
+                        if (root != null) RemapGameObjectTree(root, movedOnlyMap);
+                    }
+                }
+                EditorSceneManager.MarkSceneDirty(opened);
+                EditorSceneManager.SaveScene(opened);
+                if (logEntries != null) logEntries.Add("Retargeted organized scene: " + scenePath);
+                return true;
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(opened, true);
+            }
+        }
+
+        private static bool RelockPoiyomiMaterials(HashSet<string> unlockedPaths, List<string> logEntries)
+        {
+            if (unlockedPaths == null || unlockedPaths.Count == 0) return true;
+
+            List<Material> toLock = CollectMaterialsAtPaths(unlockedPaths);
+            toLock.RemoveAll(material => material == null || IsPoiyomiLocked(material));
+            if (toLock.Count == 0) return true;
 
             if (TryLockPoiyomiMaterials(toLock))
             {
@@ -2017,12 +2323,13 @@ namespace KaleidoVR.EditorTools
                     if (material != null) EditorUtility.SetDirty(material);
                 }
                 AssetDatabase.SaveAssets();
-                if (logEntries != null) logEntries.Add("Re-locked original Poiyomi materials: " + toLock.Count);
-                return;
+                if (logEntries != null) logEntries.Add("Re-locked Poiyomi materials after organize: " + toLock.Count);
+                return true;
             }
 
-            if (logEntries != null) logEntries.Add("Could not re-lock original Poiyomi materials.");
-            Debug.LogWarning("[KaleidoVR] Could not re-lock original Poiyomi materials. Thry ShaderOptimizer was not found or lock failed.");
+            if (logEntries != null) logEntries.Add("Could not re-lock Poiyomi materials.");
+            Debug.LogWarning("[KaleidoVR] Could not re-lock Poiyomi materials. Thry ShaderOptimizer was not found or lock failed.");
+            return false;
         }
 
         private static List<Material> CollectMaterialsAtPaths(HashSet<string> paths)
@@ -2339,7 +2646,7 @@ namespace KaleidoVR.EditorTools
                     || shaderName.IndexOf("Hidden", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
-        private static void UnlockPoiyomiMaterialsAtPaths(IEnumerable<string> paths, List<string> logEntries)
+        private static void UnlockPoiyomiMaterialsAtPaths(IEnumerable<string> paths, HashSet<string> unlockedToRelock, List<string> logEntries)
         {
             if (paths == null) return;
 
@@ -2358,10 +2665,16 @@ namespace KaleidoVR.EditorTools
             {
                 foreach (Material material in lockedMaterials)
                 {
-                    if (material != null) EditorUtility.SetDirty(material);
+                    if (material == null) continue;
+                    EditorUtility.SetDirty(material);
+                    string unlockedPath = AssetDatabase.GetAssetPath(material);
+                    if (!string.IsNullOrEmpty(unlockedPath) && unlockedToRelock != null)
+                    {
+                        unlockedToRelock.Add(unlockedPath);
+                    }
                 }
                 AssetDatabase.SaveAssets();
-                if (logEntries != null) logEntries.Add("Unlocked Poiyomi materials and left them unlocked: " + lockedMaterials.Count);
+                if (logEntries != null) logEntries.Add("Unlocked Poiyomi materials for remapping; they will be re-locked after organize: " + lockedMaterials.Count);
                 return;
             }
 
@@ -2413,6 +2726,13 @@ namespace KaleidoVR.EditorTools
 
             try
             {
+                MethodInfo lockMaterials = FindUnlockMethod(optimizerType, "LockMaterials");
+                if (lockMaterials != null)
+                {
+                    InvokeThryUnlock(lockMaterials, materials);
+                    return true;
+                }
+
                 MethodInfo setLocked = FindUnlockMethod(optimizerType, "SetLockedForAllMaterials");
                 if (setLocked != null)
                 {
