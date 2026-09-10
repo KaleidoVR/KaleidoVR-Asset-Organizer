@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.6";
+        public static readonly string VERSION = "1.0.7";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -707,7 +707,7 @@ namespace KaleidoVR.EditorTools
 
                 // Unlock copied Poiyomi materials before remapping so texture slots can
                 // follow the new files. Leave them unlocked; VRChat/Poiyomi lock on upload.
-                UnlockTransferredPoiyomiMaterials(copiedAssetsMap, logEntries);
+                UnlockPoiyomiMaterialsAtPaths(copiedAssetsMap.Values, logEntries);
 
                 // Copy and Move both land as new-GUID files. Remap those copies onto each other
                 // before the originals are deleted.
@@ -848,6 +848,7 @@ namespace KaleidoVR.EditorTools
                 logEntries.Add($"Pipeline Complete. Copied={copied}, Moved={moved}, Ignored={ignored}");
                 if (originalsToDeleteAfterMove.Count > 0)
                 {
+                    RetargetLeftoverSourceAssets(window.objectsToOrganize, copiedAssetsMap, originalsToDeleteAfterMove, protectedAssetPaths, logEntries);
                     RetargetOriginalsToNewAssets(window.objectsToOrganize, copiedAssetsMap, originalsToDeleteAfterMove, savedPrefabPath, logEntries);
                 }
                 if (window.renameOldAndNewObjects)
@@ -1860,6 +1861,226 @@ namespace KaleidoVR.EditorTools
             }
         }
 
+        private static void RetargetLeftoverSourceAssets(
+            List<UnityEngine.Object> selected,
+            Dictionary<string, string> copiedAssetsMap,
+            HashSet<string> originalsToDelete,
+            HashSet<string> protectedAssetPaths,
+            List<string> logEntries)
+        {
+            if (copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
+            if (originalsToDelete == null || originalsToDelete.Count == 0) return;
+
+            HashSet<string> leftoverPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string sourcePath in copiedAssetsMap.Keys)
+            {
+                if (string.IsNullOrEmpty(sourcePath) || originalsToDelete.Contains(sourcePath)) continue;
+                leftoverPaths.Add(sourcePath);
+            }
+
+            AddRendererMaterialPaths(selected, leftoverPaths, originalsToDelete);
+
+            if (leftoverPaths.Count == 0) return;
+
+            List<Material> leftoverLocked = CollectLockedMaterialsAtPaths(leftoverPaths);
+            HashSet<string> leftoverLockedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Material locked in leftoverLocked)
+            {
+                string lockedPath = AssetDatabase.GetAssetPath(locked);
+                if (!string.IsNullOrEmpty(lockedPath)) leftoverLockedPaths.Add(lockedPath);
+            }
+
+            bool unlockedLeftover = leftoverLocked.Count == 0 || TryUnlockPoiyomiMaterials(leftoverLocked);
+            if (leftoverLocked.Count > 0 && unlockedLeftover)
+            {
+                foreach (Material material in leftoverLocked)
+                {
+                    if (material != null) EditorUtility.SetDirty(material);
+                }
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                logEntries.Add("Unlocked leftover Poiyomi materials to retarget textures: " + leftoverLocked.Count);
+            }
+            else if (leftoverLocked.Count > 0)
+            {
+                PreserveTexturesUsedByLockedMaterials(leftoverLocked, originalsToDelete, logEntries);
+                logEntries.Add("Could not unlock leftover Poiyomi materials. Original textures they still use were not deleted.");
+                Debug.LogWarning("[KaleidoVR] Leftover Poiyomi materials are locked and Thry ShaderOptimizer was not found. Their original textures were kept so they do not go missing.");
+            }
+
+            int retargeted = 0;
+            foreach (string path in leftoverPaths)
+            {
+                if (string.IsNullOrEmpty(path)) continue;
+                if (IsProtectedAssetPath(path, protectedAssetPaths)) continue;
+                if (AssetDatabase.LoadMainAssetAtPath(path) == null) continue;
+
+                UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath(path);
+                if (assets == null) continue;
+
+                bool any = false;
+                foreach (UnityEngine.Object asset in assets)
+                {
+                    if (asset == null) continue;
+                    if (asset is Material lockedMat && IsPoiyomiLocked(lockedMat))
+                    {
+                        PreserveTexturesUsedByLockedMaterials(new List<Material> { lockedMat }, originalsToDelete, logEntries);
+                        continue;
+                    }
+                    RemapSerializedReferences(asset, copiedAssetsMap);
+                    EditorUtility.SetDirty(asset);
+                    any = true;
+                }
+
+                if (any)
+                {
+                    retargeted++;
+                    logEntries.Add("Retargeted leftover source asset: " + path);
+                }
+            }
+
+            if (retargeted > 0) AssetDatabase.SaveAssets();
+
+            if (unlockedLeftover && leftoverLockedPaths.Count > 0)
+            {
+                List<Material> toRelock = CollectMaterialsAtPaths(leftoverLockedPaths);
+                if (TryLockPoiyomiMaterials(toRelock))
+                {
+                    foreach (Material material in toRelock)
+                    {
+                        if (material != null) EditorUtility.SetDirty(material);
+                    }
+                    AssetDatabase.SaveAssets();
+                    logEntries.Add("Re-locked leftover Poiyomi materials after retarget: " + toRelock.Count);
+                }
+                else
+                {
+                    logEntries.Add("Leftover Poiyomi materials were retargeted but could not be re-locked.");
+                }
+            }
+
+            if (retargeted > 0)
+            {
+                logEntries.Add("Retargeted leftover source assets to moved files: " + retargeted);
+            }
+        }
+
+        private static List<Material> CollectLockedMaterialsAtPaths(HashSet<string> paths)
+        {
+            List<Material> locked = new List<Material>();
+            if (paths == null) return locked;
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string path in paths)
+            {
+                if (string.IsNullOrEmpty(path) || !seen.Add(path)) continue;
+                Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (IsPoiyomiLocked(material)) locked.Add(material);
+            }
+            return locked;
+        }
+
+        private static List<Material> CollectMaterialsAtPaths(HashSet<string> paths)
+        {
+            List<Material> materials = new List<Material>();
+            if (paths == null) return materials;
+
+            foreach (string path in paths)
+            {
+                if (string.IsNullOrEmpty(path)) continue;
+                Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (material != null) materials.Add(material);
+            }
+            return materials;
+        }
+
+        private static void PreserveTexturesUsedByLockedMaterials(List<Material> lockedMaterials, HashSet<string> originalsToDelete, List<string> logEntries)
+        {
+            if (lockedMaterials == null || originalsToDelete == null || originalsToDelete.Count == 0) return;
+
+            foreach (Material material in lockedMaterials)
+            {
+                if (material == null) continue;
+
+                string materialPath = AssetDatabase.GetAssetPath(material);
+                if (!string.IsNullOrEmpty(materialPath))
+                {
+                    try
+                    {
+                        foreach (string depPath in AssetDatabase.GetDependencies(materialPath, true))
+                        {
+                            KeepMovedTextureIfNeeded(depPath, originalsToDelete, logEntries);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+
+                try
+                {
+                    foreach (int nameId in material.GetTexturePropertyNameIDs())
+                    {
+                        Texture texture = material.GetTexture(nameId);
+                        if (texture == null) continue;
+                        KeepMovedTextureIfNeeded(AssetDatabase.GetAssetPath(texture), originalsToDelete, logEntries);
+                    }
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+
+        private static void KeepMovedTextureIfNeeded(string path, HashSet<string> originalsToDelete, List<string> logEntries)
+        {
+            path = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
+            if (string.IsNullOrEmpty(path) || originalsToDelete == null) return;
+            if (!originalsToDelete.Contains(path)) return;
+            if (!IsTextureFamilyPath(path)) return;
+            originalsToDelete.Remove(path);
+            if (logEntries != null) logEntries.Add("Kept original texture used by locked Poiyomi material: " + path);
+        }
+
+        private static bool IsTextureFamilyPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(path);
+            string typeName = KaleidoAssetOrganizerHelpers.AliasOrganizeType(
+                KaleidoAssetOrganizerHelpers.ResolveExportTypeName(path, main, null));
+            return typeName == "Texture2D" || typeName == "Cubemap";
+        }
+
+        private static void AddRendererMaterialPaths(List<UnityEngine.Object> selected, HashSet<string> leftoverPaths, HashSet<string> originalsToDelete)
+        {
+            if (selected == null || leftoverPaths == null) return;
+
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
+                if (go == null) continue;
+
+                Renderer[] renderers = go.GetComponentsInChildren<Renderer>(true);
+                if (renderers == null) continue;
+                foreach (Renderer renderer in renderers)
+                {
+                    if (renderer == null) continue;
+                    Material[] materials = renderer.sharedMaterials;
+                    if (materials == null) continue;
+                    foreach (Material material in materials)
+                    {
+                        if (material == null) continue;
+                        string path = AssetDatabase.GetAssetPath(material);
+                        if (string.IsNullOrEmpty(path)) continue;
+                        if (originalsToDelete != null && originalsToDelete.Contains(path)) continue;
+                        leftoverPaths.Add(path);
+                    }
+                }
+            }
+        }
+
         private static void RetargetOriginalsToNewAssets(
             List<UnityEngine.Object> selected,
             Dictionary<string, string> copiedAssetsMap,
@@ -1998,16 +2219,16 @@ namespace KaleidoVR.EditorTools
                     || shaderName.IndexOf("Hidden", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
-        private static void UnlockTransferredPoiyomiMaterials(Dictionary<string, string> copiedAssetsMap, List<string> logEntries)
+        private static void UnlockPoiyomiMaterialsAtPaths(IEnumerable<string> paths, List<string> logEntries)
         {
-            if (copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
+            if (paths == null) return;
 
             List<Material> lockedMaterials = new List<Material>();
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string destPath in copiedAssetsMap.Values)
+            foreach (string path in paths)
             {
-                if (string.IsNullOrEmpty(destPath) || !seen.Add(destPath)) continue;
-                Material material = AssetDatabase.LoadAssetAtPath<Material>(destPath);
+                if (string.IsNullOrEmpty(path) || !seen.Add(path)) continue;
+                Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
                 if (IsPoiyomiLocked(material)) lockedMaterials.Add(material);
             }
 
@@ -2020,11 +2241,14 @@ namespace KaleidoVR.EditorTools
                     if (material != null) EditorUtility.SetDirty(material);
                 }
                 AssetDatabase.SaveAssets();
-                logEntries.Add("Unlocked Poiyomi materials and left them unlocked: " + lockedMaterials.Count);
+                if (logEntries != null) logEntries.Add("Unlocked Poiyomi materials and left them unlocked: " + lockedMaterials.Count);
                 return;
             }
 
-            logEntries.Add("Could not unlock " + lockedMaterials.Count + " Poiyomi material(s). Thry ShaderOptimizer was not found, so locked materials were left as-is and their texture slots were not remapped.");
+            if (logEntries != null)
+            {
+                logEntries.Add("Could not unlock " + lockedMaterials.Count + " Poiyomi material(s). Thry ShaderOptimizer was not found, so locked materials were left as-is and their texture slots were not remapped.");
+            }
             Debug.LogWarning("[KaleidoVR] Poiyomi materials are locked, but Thry ShaderOptimizer is not in this project. Install Poiyomi/Thry to unlock them during organize. Locked materials were not remapped.");
         }
 
@@ -2054,6 +2278,31 @@ namespace KaleidoVR.EditorTools
             catch (Exception ex)
             {
                 Debug.LogWarning("[KaleidoVR] Poiyomi unlock failed: " + ex.Message);
+                return false;
+            }
+
+            return false;
+        }
+
+        private static bool TryLockPoiyomiMaterials(List<Material> materials)
+        {
+            if (materials == null || materials.Count == 0) return true;
+
+            Type optimizerType = FindThryShaderOptimizerType();
+            if (optimizerType == null) return false;
+
+            try
+            {
+                MethodInfo setLocked = FindUnlockMethod(optimizerType, "SetLockedForAllMaterials");
+                if (setLocked != null)
+                {
+                    InvokeThrySetLocked(setLocked, materials, 1);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[KaleidoVR] Poiyomi re-lock failed: " + ex.Message);
                 return false;
             }
 
