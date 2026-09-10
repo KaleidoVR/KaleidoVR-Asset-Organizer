@@ -1,12 +1,9 @@
-// =========================================================================
-// BLOCK 1: GLOBAL ENGINE DIRECTIVES & ROOT MODULE CONFIGURATION
 // KaleidoVR Asset Organizer
 // Created by KaleidoVR - https://kalivr.com
 // Copyright (c) 2026 KaleidoVR. Released under the MIT License.
 // Compatible with Unity 2022.3.22f1 through Unity 6 (6000.x)
 // VRChat SDK3 Avatars optional (Auto-Link FX & Menu)
 // Uses 2022.3 LTS AssetDatabase/PrefabUtility APIs only (no 2023+/Unity 6-only types)
-// =========================================================================
 
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -24,7 +21,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.1.1";
+        public static readonly string VERSION = "1.1.2";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -42,18 +39,12 @@ namespace KaleidoVR.EditorTools
         public string prefabName = SAMPLE_PREFAB_NAME;
         public bool createPrefab = true;
         public bool renameOldAndNewObjects = false;
-        // =========================================================================
-        // BLOCK 2: AUTOMATION PIPELINES VARIABLE DECLARATIONS
-        // =========================================================================
 
         public bool autoParsePoiyomi = true;
         public bool autoSetupVRCDescriptor = true;
 
         public List<UnityEngine.Object> objectsToOrganize = new List<UnityEngine.Object>();
         public List<UnityEngine.Object> ignoreList = new List<UnityEngine.Object>();
-        // =========================================================================
-        // BLOCK 3: SORTER PIPELINE LOOKUP ROUTING DICTIONARY
-        // =========================================================================
 
         public Dictionary<string, string> organizeOptions = new Dictionary<string, string>()
         {
@@ -74,9 +65,6 @@ namespace KaleidoVR.EditorTools
             {"MonoScript", "Ignore"},
             {"DefaultAsset", "Ignore"}
         };
-        // =========================================================================
-        // BLOCK 4: MENU ITEMS & TEXTURE CACHE LOADING WITH EDITORPREFS RESTORERS
-        // =========================================================================
 
         [MenuItem("KaleidoVR/Asset Organizer")]
         public static void ShowWindow()
@@ -186,9 +174,6 @@ namespace KaleidoVR.EditorTools
                 EditorPrefs.SetString("KVR_Opt_" + kvp.Key, kvp.Value);
             }
         }
-        // =========================================================================
-        // BLOCK 5: WINDOW GUI RENDER ENTRYPOINT LOOPS & SERIALIZATION HOOKS
-        // =========================================================================
 
         private void OnGUI()
         {
@@ -217,9 +202,6 @@ namespace KaleidoVR.EditorTools
 
             ResizeWindow();
         }
-        // =========================================================================
-        // BLOCK 6: PANEL BOUNDARY DIMENSION EQUATIONS
-        // =========================================================================
 
         public void ResizeWindow()
         {
@@ -240,9 +222,6 @@ namespace KaleidoVR.EditorTools
             maxSize = targetSize;
         }
     }
-    // =========================================================================
-    // BLOCK 7: HELPER MULTI-DROP STACKING RECEIVERS
-    // =========================================================================
 
     public static class KaleidoAssetOrganizerHelpers
     {
@@ -268,9 +247,6 @@ namespace KaleidoVR.EditorTools
                 Event.current.Use();
             }
         }
-        // =========================================================================
-        // BLOCK 8: RECURSIVE EXCLUSIONS DEPENDENCY BUILDERS
-        // =========================================================================
 
         public static HashSet<string> BuildRecursiveIgnoreMap(List<UnityEngine.Object> rawIgnoreList)
         {
@@ -293,9 +269,6 @@ namespace KaleidoVR.EditorTools
 
                 collectedObjects.Add(root);
             }
-            // =========================================================================
-            // BLOCK 9: DOWNSTREAM DEPENDENCIES RESOLVER BLOCKS
-            // =========================================================================
 
             if (collectedObjects.Count > 0)
             {
@@ -309,9 +282,6 @@ namespace KaleidoVR.EditorTools
             }
             return subAssetPaths;
         }
-        // =========================================================================
-        // BLOCK 10: HIERARCHY SCANNERS & SUFFIX FILTER RULES
-        // =========================================================================
 
         public static List<UnityEngine.Object> GetAllObjectsIncludingChildren(List<UnityEngine.Object> roots, List<UnityEngine.Object> ignoreList)
         {
@@ -335,9 +305,6 @@ namespace KaleidoVR.EditorTools
             list.Add(parent.gameObject);
             foreach (Transform child in parent) CollectChildObjects(child, list, ignoreList);
         }
-        // =========================================================================
-        // BLOCK 11: FILE PATH SORTER DESTINATION PARSERS
-        // =========================================================================
 
         public static bool ShouldIgnoreAsset(string path)
         {
@@ -515,9 +482,6 @@ namespace KaleidoVR.EditorTools
             };
         }
     }
-    // =========================================================================
-    // BLOCK 12: ORGANIZATION ENGINE ENTRYPOINTS & LOGGING SETUP
-    // =========================================================================
 
     public static class KaleidoAssetOrganizerLogic
     {
@@ -596,9 +560,6 @@ namespace KaleidoVR.EditorTools
                 int totalAssets = Mathf.Max(1, dependencies.Count);
                 int currentAssetIndex = 0;
                 HashSet<string> processedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                // =========================================================================
-                // BLOCK 13: FILE TRANSFER ITERATOR EXECUTION FRAMEWORK
-                // =========================================================================
                 // CopyAsset/MoveAsset run with a live Asset Database so folder creation and
                 // unique-path checks work the same on 2022.3.22f1 and Unity 6.
                 // (AssetDatabase.AssetEditingScope is 2023.1+ only — do not use it here.)
@@ -688,9 +649,6 @@ namespace KaleidoVR.EditorTools
                 RemapCopiedAssetReferences(copiedAssetsMap, protectedAssetPaths);
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
-                // =========================================================================
-                // BLOCK 14: AUTOMATED PREFAB PACKAGING ENGINE LOOPS
-                // =========================================================================
 
                 string safePrefabName = KaleidoAssetOrganizerHelpers.SanitizeFileName(window.prefabName);
                 if (string.IsNullOrEmpty(safePrefabName)) safePrefabName = KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
@@ -823,12 +781,14 @@ namespace KaleidoVR.EditorTools
                 // Copy never writes outside this run's new files. Move retargets every
                 // remaining project/scene reference (including earlier organize folders)
                 // so those copies follow the new files before the sources are deleted.
+                List<LeftoverOriginalPrefab> leftoverOriginalPrefabs = new List<LeftoverOriginalPrefab>();
                 if (originalsToDeleteAfterMove.Count > 0)
                 {
                     Dictionary<string, string> movedOnlyMap = BuildMovedOnlyMap(copiedAssetsMap, originalsToDeleteAfterMove);
+                    HashSet<string> selectedMovedPrefabPaths = CollectSelectedMovedPrefabPaths(window.objectsToOrganize, originalsToDeleteAfterMove);
                     RetargetProjectReferencesToMovedAssets(window.objectsToOrganize, copiedAssetsMap, movedOnlyMap, originalsToDeleteAfterMove, protectedAssetPaths, poiyomiUnlockedToRelock, logEntries);
-                    RetargetLoadedScenesToMovedAssets(movedOnlyMap, logEntries);
-                    RetargetOriginalsToNewAssets(window.objectsToOrganize, movedOnlyMap, originalsToDeleteAfterMove, logEntries);
+                    RetargetLoadedScenesToMovedAssets(movedOnlyMap, protectedInstanceIds, selectedMovedPrefabPaths, logEntries);
+                    RetargetOriginalsToNewAssets(window.objectsToOrganize, movedOnlyMap, originalsToDeleteAfterMove, selectedMovedPrefabPaths, leftoverOriginalPrefabs, logEntries);
                 }
                 if (window.renameOldAndNewObjects)
                 {
@@ -839,6 +799,7 @@ namespace KaleidoVR.EditorTools
                 AssetDatabase.Refresh();
                 KeepMovedSourcesIfStillReferenced(originalsToDeleteAfterMove, copiedDestinations, logEntries);
                 DeleteMovedSourceAssets(originalsToDeleteAfterMove, window.outputDirectory, logEntries);
+                SaveLeftoverOriginalPrefabs(leftoverOriginalPrefabs, logEntries);
                 RemoveEmptyOutputFolders(window.outputDirectory, logEntries);
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
@@ -2230,7 +2191,11 @@ namespace KaleidoVR.EditorTools
             return false;
         }
 
-        private static void RetargetLoadedScenesToMovedAssets(Dictionary<string, string> movedOnlyMap, List<string> logEntries)
+        private static void RetargetLoadedScenesToMovedAssets(
+            Dictionary<string, string> movedOnlyMap,
+            HashSet<int> skipPrefabOnIds,
+            HashSet<string> skipPrefabPaths,
+            List<string> logEntries)
         {
             if (movedOnlyMap == null || movedOnlyMap.Count == 0) return;
 
@@ -2242,7 +2207,7 @@ namespace KaleidoVR.EditorTools
                 if (roots == null) continue;
                 foreach (GameObject root in roots)
                 {
-                    if (root != null) RemapGameObjectTree(root, movedOnlyMap);
+                    if (root != null) RemapGameObjectTree(root, movedOnlyMap, skipPrefabOnIds, skipPrefabPaths);
                 }
                 EditorSceneManager.MarkSceneDirty(scene);
                 if (logEntries != null && !string.IsNullOrEmpty(scene.path))
@@ -2488,6 +2453,8 @@ namespace KaleidoVR.EditorTools
             List<UnityEngine.Object> selected,
             Dictionary<string, string> copiedAssetsMap,
             HashSet<string> originalsToDelete,
+            HashSet<string> selectedMovedPrefabPaths,
+            List<LeftoverOriginalPrefab> leftoverOriginalPrefabs,
             List<string> logEntries)
         {
             if (selected == null || copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
@@ -2507,9 +2474,27 @@ namespace KaleidoVR.EditorTools
                     {
                         GameObject instanceRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(go);
                         if (instanceRoot == null) instanceRoot = go;
-                        string prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(instanceRoot);
-                        bool originalPrefabStays = !string.IsNullOrEmpty(prefabPath)
-                            && (originalsToDelete == null || !originalsToDelete.Contains(prefabPath));
+                        string prefabPath = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(
+                            PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(instanceRoot));
+                        string leftoverPrefabPath = prefabPath;
+                        bool originalPrefabMoved = !string.IsNullOrEmpty(prefabPath)
+                            && originalsToDelete != null
+                            && originalsToDelete.Contains(prefabPath);
+                        if (!originalPrefabMoved && selectedMovedPrefabPaths != null && copiedAssetsMap != null)
+                        {
+                            foreach (string movedPrefab in selectedMovedPrefabPaths)
+                            {
+                                if (copiedAssetsMap.TryGetValue(movedPrefab, out string destPrefab)
+                                    && !string.IsNullOrEmpty(destPrefab)
+                                    && destPrefab.Equals(prefabPath, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    originalPrefabMoved = true;
+                                    leftoverPrefabPath = movedPrefab;
+                                    break;
+                                }
+                            }
+                        }
+                        bool originalPrefabStays = !string.IsNullOrEmpty(prefabPath) && !originalPrefabMoved;
                         if (originalPrefabStays)
                         {
                             RemapGameObjectAssetTree(prefabPath, copiedAssetsMap);
@@ -2520,18 +2505,31 @@ namespace KaleidoVR.EditorTools
                             continue;
                         }
 
-                        if (!string.IsNullOrEmpty(prefabPath))
+                        if (originalPrefabMoved)
                         {
                             PrefabUtility.UnpackPrefabInstance(instanceRoot, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
                             remapRoot = instanceRoot;
-                            logEntries.Add("Unpacked original instance because its prefab was moved: " + prefabPath);
+                            if (leftoverOriginalPrefabs != null
+                                && leftoverPrefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                            {
+                                leftoverOriginalPrefabs.Add(new LeftoverOriginalPrefab
+                                {
+                                    instance = instanceRoot,
+                                    originalPrefabPath = leftoverPrefabPath
+                                });
+                                logEntries.Add("Unpacked original instance to give it its own leftover prefab: " + leftoverPrefabPath);
+                            }
+                            else
+                            {
+                                logEntries.Add("Unpacked original instance because its source was moved: " + leftoverPrefabPath);
+                            }
                         }
                     }
 
                     Component[] components = remapRoot.GetComponentsInChildren<Component>(true);
                     foreach (Component comp in components)
                     {
-                        if (comp != null) RemapSerializedReferences(comp, copiedAssetsMap);
+                        if (comp != null) RemapSerializedReferences(comp, copiedAssetsMap, selectedMovedPrefabPaths);
                     }
 
                     EditorUtility.SetDirty(remapRoot);
@@ -2587,6 +2585,79 @@ namespace KaleidoVR.EditorTools
             }
         }
 
+        private struct LeftoverOriginalPrefab
+        {
+            public GameObject instance;
+            public string originalPrefabPath;
+        }
+
+        private static HashSet<string> CollectSelectedMovedPrefabPaths(List<UnityEngine.Object> selected, HashSet<string> originalsToDelete)
+        {
+            HashSet<string> paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (selected == null || originalsToDelete == null) return paths;
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
+                if (go == null) continue;
+                string prefabPath = null;
+                try { prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(go); } catch (Exception) { }
+                if (string.IsNullOrEmpty(prefabPath)) prefabPath = ResolveGameObjectAssetPath(go);
+                prefabPath = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(prefabPath);
+                if (!string.IsNullOrEmpty(prefabPath)
+                    && prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)
+                    && originalsToDelete.Contains(prefabPath))
+                {
+                    paths.Add(prefabPath);
+                }
+            }
+            return paths;
+        }
+
+        private static void SaveLeftoverOriginalPrefabs(List<LeftoverOriginalPrefab> leftoverOriginalPrefabs, List<string> logEntries)
+        {
+            if (leftoverOriginalPrefabs == null || leftoverOriginalPrefabs.Count == 0) return;
+
+            foreach (LeftoverOriginalPrefab leftover in leftoverOriginalPrefabs)
+            {
+                if (leftover.instance == null || string.IsNullOrEmpty(leftover.originalPrefabPath)) continue;
+
+                string destPath = leftover.originalPrefabPath;
+                if (AssetDatabase.LoadMainAssetAtPath(destPath) != null)
+                {
+                    string directory = Path.GetDirectoryName(destPath);
+                    if (string.IsNullOrEmpty(directory)) directory = "Assets";
+                    directory = directory.Replace("\\", "/");
+                    string fileName = Path.GetFileNameWithoutExtension(destPath) + " (Original).prefab";
+                    destPath = AssetDatabase.GenerateUniqueAssetPath(directory + "/" + fileName);
+                }
+
+                string destFolder = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(destFolder) && !EnsureSingleAssetDirectory(destFolder.Replace("\\", "/")))
+                {
+                    if (logEntries != null) logEntries.Add("Could not create leftover original prefab folder: " + destFolder);
+                    continue;
+                }
+
+                if (PrefabUtility.IsPartOfPrefabInstance(leftover.instance))
+                {
+                    PrefabUtility.UnpackPrefabInstance(leftover.instance, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+                }
+
+                GameObject saved = PrefabUtility.SaveAsPrefabAssetAndConnect(leftover.instance, destPath, InteractionMode.AutomatedAction);
+                if (saved == null)
+                {
+                    if (logEntries != null) logEntries.Add("Could not save leftover original prefab: " + destPath);
+                    continue;
+                }
+
+                EditorUtility.SetDirty(leftover.instance);
+                if (leftover.instance.scene.IsValid()) EditorSceneManager.MarkSceneDirty(leftover.instance.scene);
+                if (logEntries != null) logEntries.Add("Saved leftover original prefab: " + destPath);
+            }
+        }
+
         private static bool RemapGameObjectAssetTree(string assetPath, Dictionary<string, string> copiedAssetsMap)
         {
             if (string.IsNullOrEmpty(assetPath) || copiedAssetsMap == null || copiedAssetsMap.Count == 0) return false;
@@ -2597,16 +2668,28 @@ namespace KaleidoVR.EditorTools
             return true;
         }
 
-        private static void RemapGameObjectTree(GameObject root, Dictionary<string, string> copiedAssetsMap)
+        private static void RemapGameObjectTree(
+            GameObject root,
+            Dictionary<string, string> copiedAssetsMap,
+            HashSet<int> skipPrefabOnIds = null,
+            HashSet<string> skipPrefabPaths = null)
         {
             if (root == null || copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
-            RemapSerializedReferences(root, copiedAssetsMap);
+            HashSet<string> skip = ShouldSkipPrefabRemap(root, skipPrefabOnIds) ? skipPrefabPaths : null;
+            RemapSerializedReferences(root, copiedAssetsMap, skip);
             Component[] components = root.GetComponentsInChildren<Component>(true);
             if (components == null) return;
             foreach (Component comp in components)
             {
-                if (comp != null) RemapSerializedReferences(comp, copiedAssetsMap);
+                if (comp == null) continue;
+                skip = ShouldSkipPrefabRemap(comp, skipPrefabOnIds) ? skipPrefabPaths : null;
+                RemapSerializedReferences(comp, copiedAssetsMap, skip);
             }
+        }
+
+        private static bool ShouldSkipPrefabRemap(UnityEngine.Object obj, HashSet<int> skipPrefabOnIds)
+        {
+            return obj != null && skipPrefabOnIds != null && skipPrefabOnIds.Contains(obj.GetInstanceID());
         }
 
         private static UnityEngine.Object RemapReferencedObject(UnityEngine.Object original, Dictionary<string, string> copiedAssetsMap)
@@ -2849,7 +2932,10 @@ namespace KaleidoVR.EditorTools
             }
         }
 
-        private static void RemapSerializedReferences(UnityEngine.Object target, Dictionary<string, string> movedAssetsMap)
+        private static void RemapSerializedReferences(
+            UnityEngine.Object target,
+            Dictionary<string, string> movedAssetsMap,
+            HashSet<string> skipSourcePaths = null)
         {
             if (target == null || movedAssetsMap == null || movedAssetsMap.Count == 0) return;
 
@@ -2871,7 +2957,13 @@ namespace KaleidoVR.EditorTools
                         if (referenced == null) continue;
                         if (IsHierarchyReference(referenced)) continue;
 
-                        string referencedPath = AssetDatabase.GetAssetPath(referenced);
+                        string referencedPath = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(AssetDatabase.GetAssetPath(referenced));
+                        if (!string.IsNullOrEmpty(referencedPath)
+                            && skipSourcePaths != null
+                            && skipSourcePaths.Contains(referencedPath))
+                        {
+                            continue;
+                        }
                         if (string.IsNullOrEmpty(referencedPath)) continue;
                         if (!movedAssetsMap.TryGetValue(referencedPath, out string remappedPath)) continue;
                         if (referencedPath.Equals(remappedPath, StringComparison.OrdinalIgnoreCase)) continue;
@@ -2956,9 +3048,6 @@ namespace KaleidoVR.EditorTools
             if (referenced is GameObject && !AssetDatabase.IsMainAsset(referenced)) return true;
             return false;
         }
-        // =========================================================================
-        // BLOCK 15: DESCRIPTOR LAYER AUTOMATION LINKS ENGINE
-        // =========================================================================
 
         private static Type FindTypeByFullName(string fullName)
         {
@@ -3292,9 +3381,6 @@ namespace KaleidoVR.EditorTools
         }
     }
 }
-// =========================================================================
-// BLOCK 16: USER INTERFACE LIST SCRIPT SORTERS & OBJECT DROP GRIDS
-// =========================================================================
 
 namespace KaleidoVR.EditorTools
 {
@@ -3443,9 +3529,6 @@ namespace KaleidoVR.EditorTools
                 int currentIndex = Array.IndexOf(organizeActions, window.organizeOptions[key]); int selectedIndex = EditorGUILayout.Popup(currentIndex < 0 ? 0 : currentIndex, organizeActions, GUILayout.Width(90)); window.organizeOptions[key] = organizeActions[selectedIndex]; EditorGUILayout.EndHorizontal();
             }
         }
-        // =========================================================================
-        // BLOCK 17: NATIVE SKIN ICON TRANSLATORS & ACTION LINK PORTALS
-        // =========================================================================
 
         private static Texture GetNativeUnityIcon(string typeName)
         {
