@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.5";
+        public static readonly string VERSION = "1.0.6";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -783,20 +783,6 @@ namespace KaleidoVR.EditorTools
                             }
                         }
 
-                        List<string> ignoredRelativePaths = CollectIgnoredRelativePaths(activeTargetGameObjects, window.ignoreList);
-                        int strippedIgnored = 0;
-                        if (activeTargetGameObjects.Count <= 1)
-                        {
-                            strippedIgnored += StripIgnoredChildren(finalTargetRoot, ignoredRelativePaths, logEntries);
-                        }
-                        else
-                        {
-                            foreach (GameObject inst in instantiatedInstances)
-                            {
-                                strippedIgnored += StripIgnoredChildren(inst, ignoredRelativePaths, logEntries);
-                            }
-                        }
-
                         Component[] allComponents = finalTargetRoot.GetComponentsInChildren<Component>(true);
                         foreach (Component comp in allComponents)
                         {
@@ -814,7 +800,7 @@ namespace KaleidoVR.EditorTools
                             string prefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
                             string prefabPath = $"{prefabFolder}/{prefabFileName}.prefab";
                             bool wrappingMultiple = activeTargetGameObjects.Count > 1;
-                            string transferredPrefab = (wrappingMultiple || strippedIgnored > 0) ? null : FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
+                            string transferredPrefab = wrappingMultiple ? null : FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
                             bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
                             bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
 
@@ -1039,13 +1025,17 @@ namespace KaleidoVR.EditorTools
                 }
 
                 Component[] components = go.GetComponentsInChildren<Component>(true);
-                List<UnityEngine.Object> harvestTargets = new List<UnityEngine.Object> { go };
+                List<UnityEngine.Object> harvestTargets = new List<UnityEngine.Object>();
                 if (components != null)
                 {
                     foreach (Component comp in components)
                     {
                         if (comp == null) continue;
-                        if (ignoredHierarchy.Contains(comp.gameObject)) continue;
+                        if (ignoredHierarchy.Contains(comp.gameObject))
+                        {
+                            HarvestSerializedAssetReferences(comp, assetPaths, AssetHarvestMode.MeshAndModelOnly);
+                            continue;
+                        }
                         harvestTargets.Add(comp);
                     }
                 }
@@ -1057,9 +1047,12 @@ namespace KaleidoVR.EditorTools
 
                 try
                 {
-                    foreach (UnityEngine.Object collected in EditorUtility.CollectDependencies(harvestTargets.ToArray()))
+                    if (harvestTargets.Count > 0)
                     {
-                        AddResolvedAssetPath(collected, assetPaths, null);
+                        foreach (UnityEngine.Object collected in EditorUtility.CollectDependencies(harvestTargets.ToArray()))
+                        {
+                            AddResolvedAssetPath(collected, assetPaths, null);
+                        }
                     }
                 }
                 catch (Exception)
@@ -1086,6 +1079,7 @@ namespace KaleidoVR.EditorTools
                 }
             }
 
+            PruneAssetsUniqueToIgnoredHierarchy(assetPaths, selected, ignoredHierarchy);
             logEntries.Add("Project assets resolved: " + assetPaths.Count);
             return assetPaths;
         }
@@ -1199,11 +1193,30 @@ namespace KaleidoVR.EditorTools
             assetPaths.Add(path);
         }
 
+        private enum AssetHarvestMode
+        {
+            All,
+            MeshAndModelOnly,
+            MaterialFamilyOnly
+        }
+
         private static void HarvestSerializedAssetReferences(UnityEngine.Object target, HashSet<string> assetPaths)
+        {
+            HarvestSerializedAssetReferences(target, assetPaths, AssetHarvestMode.All);
+        }
+
+        private static void HarvestSerializedAssetReferences(UnityEngine.Object target, HashSet<string> assetPaths, AssetHarvestMode mode)
         {
             if (target == null) return;
 
-            AddResolvedAssetPath(target, assetPaths, null);
+            if (mode == AssetHarvestMode.All)
+            {
+                AddResolvedAssetPath(target, assetPaths, null);
+            }
+            else if (ShouldHarvestReferencedObject(target, mode))
+            {
+                AddResolvedAssetPath(target, assetPaths, null);
+            }
 
             try
             {
@@ -1219,6 +1232,7 @@ namespace KaleidoVR.EditorTools
                         if (property.name == "m_Script") continue;
                         UnityEngine.Object referenced = property.objectReferenceValue;
                         if (referenced == null) continue;
+                        if (!ShouldHarvestReferencedObject(referenced, mode)) continue;
                         AddResolvedAssetPath(referenced, assetPaths, null);
                     }
                     catch (Exception)
@@ -1229,6 +1243,110 @@ namespace KaleidoVR.EditorTools
             }
             catch (Exception)
             {
+            }
+        }
+
+        private static bool ShouldHarvestReferencedObject(UnityEngine.Object obj, AssetHarvestMode mode)
+        {
+            if (obj == null) return false;
+            if (mode == AssetHarvestMode.All) return true;
+            if (mode == AssetHarvestMode.MeshAndModelOnly) return IsMeshOrModelReference(obj);
+            if (mode == AssetHarvestMode.MaterialFamilyOnly) return IsMaterialFamilyReference(obj);
+            return true;
+        }
+
+        private static bool IsMeshOrModelReference(UnityEngine.Object obj)
+        {
+            if (obj == null) return false;
+            if (obj is Mesh || obj is Avatar) return true;
+            string path = AssetDatabase.GetAssetPath(obj);
+            return IsModelFile(path);
+        }
+
+        private static bool IsMaterialFamilyReference(UnityEngine.Object obj)
+        {
+            if (obj == null) return false;
+            if (obj is Material || obj is Texture) return true;
+            return IsMaterialFamilyPath(AssetDatabase.GetAssetPath(obj));
+        }
+
+        private static bool IsMaterialFamilyPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            UnityEngine.Object main = AssetDatabase.LoadMainAssetAtPath(path);
+            string typeName = KaleidoAssetOrganizerHelpers.AliasOrganizeType(
+                KaleidoAssetOrganizerHelpers.ResolveExportTypeName(path, main, null));
+            return typeName == "Material" || typeName == "Texture2D" || typeName == "Cubemap";
+        }
+
+        private static void PruneAssetsUniqueToIgnoredHierarchy(HashSet<string> assetPaths, List<UnityEngine.Object> selected, HashSet<GameObject> ignoredHierarchy)
+        {
+            if (assetPaths == null || assetPaths.Count == 0) return;
+            if (selected == null || ignoredHierarchy == null || ignoredHierarchy.Count == 0) return;
+
+            HashSet<string> ignoredFamily = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> keptFamily = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
+                if (go == null) continue;
+
+                Component[] components = go.GetComponentsInChildren<Component>(true);
+                if (components == null) continue;
+                foreach (Component comp in components)
+                {
+                    if (comp == null) continue;
+                    if (ignoredHierarchy.Contains(comp.gameObject))
+                    {
+                        HarvestSerializedAssetReferences(comp, ignoredFamily, AssetHarvestMode.MaterialFamilyOnly);
+                    }
+                    else
+                    {
+                        HarvestSerializedAssetReferences(comp, keptFamily, AssetHarvestMode.MaterialFamilyOnly);
+                    }
+                }
+            }
+
+            ExpandDependencyClosure(ignoredFamily);
+            ExpandDependencyClosure(keptFamily);
+
+            List<string> remove = new List<string>();
+            foreach (string path in assetPaths)
+            {
+                if (!ignoredFamily.Contains(path) || keptFamily.Contains(path)) continue;
+                if (IsMaterialFamilyPath(path)) remove.Add(path);
+            }
+
+            foreach (string path in remove)
+            {
+                assetPaths.Remove(path);
+            }
+        }
+
+        private static void ExpandDependencyClosure(HashSet<string> paths)
+        {
+            if (paths == null || paths.Count == 0) return;
+
+            string[] seeds = new string[paths.Count];
+            paths.CopyTo(seeds);
+            foreach (string seedPath in seeds)
+            {
+                if (string.IsNullOrEmpty(seedPath) || KaleidoAssetOrganizerHelpers.ShouldIgnoreAsset(seedPath)) continue;
+                if (IsModelFile(seedPath)) continue;
+                try
+                {
+                    foreach (string depPath in AssetDatabase.GetDependencies(seedPath, true))
+                    {
+                        if (IsModelFile(depPath)) continue;
+                        AddAssetPath(depPath, paths);
+                    }
+                }
+                catch (Exception)
+                {
+                }
             }
         }
 
@@ -1654,119 +1772,6 @@ namespace KaleidoVR.EditorTools
             }
 
             return ignored;
-        }
-
-        private static List<string> CollectIgnoredRelativePaths(List<GameObject> sourceRoots, List<UnityEngine.Object> ignoreList)
-        {
-            List<string> paths = new List<string>();
-            if (sourceRoots == null || ignoreList == null) return paths;
-            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (UnityEngine.Object obj in ignoreList)
-            {
-                if (obj == null) continue;
-                GameObject ignoredGo = obj as GameObject;
-                if (ignoredGo == null && obj is Component asComponent) ignoredGo = asComponent.gameObject;
-                if (ignoredGo == null) continue;
-
-                foreach (GameObject sourceRoot in sourceRoots)
-                {
-                    if (sourceRoot == null) continue;
-                    string relative;
-                    if (TryGetRelativeHierarchyPath(sourceRoot, ignoredGo, out relative)
-                        || TryGetRelativePathFromNamedAncestor(ignoredGo, sourceRoot.name, out relative))
-                    {
-                        if (seen.Add(relative)) paths.Add(relative);
-                    }
-                }
-            }
-
-            paths.Sort((a, b) => b.Length.CompareTo(a.Length));
-            return paths;
-        }
-
-        private static bool TryGetRelativeHierarchyPath(GameObject ancestor, GameObject descendant, out string relative)
-        {
-            relative = null;
-            if (ancestor == null || descendant == null) return false;
-
-            Transform current = descendant.transform;
-            Transform ancestorTransform = ancestor.transform;
-            if (current == ancestorTransform) return false;
-
-            List<string> parts = new List<string>();
-            while (current != null && current != ancestorTransform)
-            {
-                parts.Add(current.name);
-                current = current.parent;
-            }
-
-            if (current != ancestorTransform) return false;
-            parts.Reverse();
-            relative = string.Join("/", parts);
-            return !string.IsNullOrEmpty(relative);
-        }
-
-        private static bool TryGetRelativePathFromNamedAncestor(GameObject descendant, string ancestorName, out string relative)
-        {
-            relative = null;
-            if (descendant == null || string.IsNullOrEmpty(ancestorName)) return false;
-
-            Transform current = descendant.transform;
-            List<string> parts = new List<string>();
-            while (current != null && current.name != ancestorName)
-            {
-                parts.Add(current.name);
-                current = current.parent;
-            }
-
-            if (current == null || current.name != ancestorName || parts.Count == 0) return false;
-            parts.Reverse();
-            relative = string.Join("/", parts);
-            return true;
-        }
-
-        private static int StripIgnoredChildren(GameObject cloneRoot, List<string> relativePaths, List<string> logEntries)
-        {
-            if (cloneRoot == null || relativePaths == null || relativePaths.Count == 0) return 0;
-
-            int stripped = 0;
-            foreach (string relative in relativePaths)
-            {
-                if (string.IsNullOrEmpty(relative)) continue;
-                Transform found = FindChildByRelativePath(cloneRoot.transform, relative);
-                if (found == null) continue;
-                logEntries.Add("Ignored hierarchy object: " + relative);
-                UnityEngine.Object.DestroyImmediate(found.gameObject);
-                stripped++;
-            }
-            return stripped;
-        }
-
-        private static Transform FindChildByRelativePath(Transform root, string relativePath)
-        {
-            if (root == null || string.IsNullOrEmpty(relativePath)) return null;
-
-            Transform current = root;
-            string[] parts = relativePath.Split('/');
-            foreach (string part in parts)
-            {
-                if (string.IsNullOrEmpty(part)) continue;
-                Transform next = null;
-                for (int i = 0; i < current.childCount; i++)
-                {
-                    Transform child = current.GetChild(i);
-                    if (child != null && child.name == part)
-                    {
-                        next = child;
-                        break;
-                    }
-                }
-                if (next == null) return null;
-                current = next;
-            }
-
-            return current == root ? null : current;
         }
 
         private static string GetPrimaryOrganizeName(List<UnityEngine.Object> selected)
@@ -2665,7 +2670,7 @@ namespace KaleidoVR.EditorTools
 
         public static void DrawIgnoreList(KaleidoAssetOrganizer window)
         {
-            GUILayout.Label("Ignore List (Manually Exclude Objects)", EditorStyles.boldLabel); Rect ignoreDropArea = GUILayoutUtility.GetRect(0, 30, GUILayout.ExpandWidth(true)); GUI.Box(ignoreDropArea, "Drag & Drop Objects to Exclude", EditorStyles.helpBox); KaleidoAssetOrganizerHelpers.HandleDragAndDrop(ignoreDropArea, window.ignoreList);
+            GUILayout.Label("Ignore List (Keep original materials)", EditorStyles.boldLabel); Rect ignoreDropArea = GUILayoutUtility.GetRect(0, 30, GUILayout.ExpandWidth(true)); GUI.Box(ignoreDropArea, "Drag & Drop Objects to Keep Original Materials", EditorStyles.helpBox); KaleidoAssetOrganizerHelpers.HandleDragAndDrop(ignoreDropArea, window.ignoreList);
             for (int i = 0; i < window.ignoreList.Count; i++)
             {
                 Rect rowRect = EditorGUILayout.BeginHorizontal(); window.ignoreList[i] = EditorGUILayout.ObjectField(window.ignoreList[i], typeof(UnityEngine.Object), true, GUILayout.ExpandWidth(true));
