@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.3";
+        public static readonly string VERSION = "1.0.4";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -868,10 +868,12 @@ namespace KaleidoVR.EditorTools
                 {
                     RenameOriginalObjectsForTransfer(window.objectsToOrganize, originalsToDeleteAfterMove, transferActionName, logEntries);
                 }
+                OrderSelectedScenesCameraLightAboveAvatars(window.objectsToOrganize);
                 AssetDatabase.SaveAssets();
                 DeleteMovedSourceAssets(originalsToDeleteAfterMove, window.outputDirectory, logEntries);
                 RemoveEmptyOutputFolders(window.outputDirectory, logEntries);
                 AssetDatabase.Refresh();
+                RevealOutputDirectory(window.outputDirectory);
 
                 if (copied == 0 && moved == 0)
                 {
@@ -1302,6 +1304,7 @@ namespace KaleidoVR.EditorTools
 
                 AddOrganizedSceneCamera(organizedScene);
                 AddOrganizedSceneLight(organizedScene);
+                OrderCameraLightAboveAvatars(organizedScene, sceneInstance);
 
                 if (!EditorSceneManager.SaveScene(organizedScene, scenePath))
                 {
@@ -1325,6 +1328,72 @@ namespace KaleidoVR.EditorTools
                 {
                     EditorSceneManager.CloseScene(organizedScene, true);
                 }
+            }
+        }
+
+        private static void RevealOutputDirectory(string outputDirectory)
+        {
+            string folderPath = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(outputDirectory);
+            if (string.IsNullOrEmpty(folderPath)) return;
+
+            DefaultAsset folder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(folderPath);
+            if (folder == null) return;
+
+            EditorUtility.FocusProjectWindow();
+            Selection.activeObject = folder;
+            EditorGUIUtility.PingObject(folder);
+        }
+
+        private static void OrderSelectedScenesCameraLightAboveAvatars(List<UnityEngine.Object> selected)
+        {
+            if (selected == null) return;
+
+            HashSet<int> orderedScenes = new HashSet<int>();
+            foreach (UnityEngine.Object obj in selected)
+            {
+                if (obj == null) continue;
+                GameObject go = obj as GameObject;
+                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
+                if (go == null || EditorUtility.IsPersistent(go) || !go.scene.IsValid()) continue;
+                if (!orderedScenes.Add(go.scene.handle)) continue;
+
+                GameObject root = go.transform.root != null ? go.transform.root.gameObject : go;
+                OrderCameraLightAboveAvatars(go.scene, root);
+                EditorSceneManager.MarkSceneDirty(go.scene);
+            }
+        }
+
+        private static void OrderCameraLightAboveAvatars(Scene scene, GameObject avatarRoot)
+        {
+            if (!scene.IsValid()) return;
+
+            GameObject cameraRoot = null;
+            GameObject lightRoot = null;
+            GameObject[] roots = scene.GetRootGameObjects();
+            foreach (GameObject root in roots)
+            {
+                if (root == null) continue;
+                if (cameraRoot == null && (root.name == "Main Camera" || root.CompareTag("MainCamera")))
+                {
+                    cameraRoot = root;
+                }
+                else if (lightRoot == null && root.name == "Directional Light")
+                {
+                    lightRoot = root;
+                }
+                else if (lightRoot == null)
+                {
+                    Light light = root.GetComponent<Light>();
+                    if (light != null && light.type == LightType.Directional) lightRoot = root;
+                }
+            }
+
+            int index = 0;
+            if (cameraRoot != null) cameraRoot.transform.SetSiblingIndex(index++);
+            if (lightRoot != null) lightRoot.transform.SetSiblingIndex(index++);
+            if (avatarRoot != null && avatarRoot.scene == scene && avatarRoot.transform.parent == null)
+            {
+                avatarRoot.transform.SetSiblingIndex(index);
             }
         }
 
