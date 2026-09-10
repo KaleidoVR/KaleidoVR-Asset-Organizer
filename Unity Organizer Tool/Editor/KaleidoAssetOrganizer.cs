@@ -21,7 +21,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.1.2";
+        public static readonly string VERSION = "1.1.3";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -33,8 +33,8 @@ namespace KaleidoVR.EditorTools
         private Texture2D headerIcon;
 
         public string outputDirectory = "Assets/KaleidoVR/Models/Test";
-        public const string SAMPLE_SCENE_NAME = "Name Scene";
-        public const string SAMPLE_PREFAB_NAME = "Name Prefab";
+        public const string SAMPLE_SCENE_NAME = "Name your Scene here";
+        public const string SAMPLE_PREFAB_NAME = "Name your Prefab here";
         public string sceneName = SAMPLE_SCENE_NAME;
         public string prefabName = SAMPLE_PREFAB_NAME;
         public bool createPrefab = true;
@@ -141,8 +141,8 @@ namespace KaleidoVR.EditorTools
             }
             if (EditorPrefs.HasKey("KVR_SceneName")) sceneName = EditorPrefs.GetString("KVR_SceneName");
             if (EditorPrefs.HasKey("KVR_PrefabName")) prefabName = EditorPrefs.GetString("KVR_PrefabName");
-            if (string.IsNullOrEmpty(sceneName) || sceneName == "OrganizedScene" || sceneName == "MyAvatar_Scene") sceneName = SAMPLE_SCENE_NAME;
-            if (string.IsNullOrEmpty(prefabName) || prefabName == "NewAvatar" || prefabName == "MyAvatar") prefabName = SAMPLE_PREFAB_NAME;
+            if (KaleidoAssetOrganizerUI.IsSampleSceneName(sceneName)) sceneName = SAMPLE_SCENE_NAME;
+            if (KaleidoAssetOrganizerUI.IsSamplePrefabName(prefabName)) prefabName = SAMPLE_PREFAB_NAME;
             if (EditorPrefs.HasKey("KVR_CreatePrefab")) createPrefab = EditorPrefs.GetBool("KVR_CreatePrefab");
             if (EditorPrefs.HasKey("KVR_RenameOldNew")) renameOldAndNewObjects = EditorPrefs.GetBool("KVR_RenameOldNew");
             autoParsePoiyomi = true;
@@ -1911,12 +1911,12 @@ namespace KaleidoVR.EditorTools
                 }
             }
 
-            return KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
+            return "Avatar";
         }
 
         private static string FormatTransferObjectName(string objectName, bool isNew, string action)
         {
-            if (string.IsNullOrEmpty(objectName)) objectName = KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
+            if (string.IsNullOrEmpty(objectName)) objectName = "Avatar";
             if (string.IsNullOrEmpty(action)) action = "Copy";
             return StripTransferObjectSuffix(objectName) + " (" + (isNew ? "New " : "Old ") + action + ")";
         }
@@ -3427,25 +3427,61 @@ namespace KaleidoVR.EditorTools
             EditorGUILayout.EndHorizontal();
         }
 
-        private static bool IsSampleSceneName(string name)
+        public static bool IsSampleSceneName(string name)
         {
             return string.IsNullOrEmpty(name)
                 || name == "OrganizedScene"
                 || name == "MyAvatar_Scene"
+                || name == "Test"
+                || name == "Test_Scene"
+                || name == "Test Scene"
+                || name == "Name Scene"
                 || name == KaleidoAssetOrganizer.SAMPLE_SCENE_NAME;
         }
 
-        private static bool IsSamplePrefabName(string name)
+        public static bool IsSamplePrefabName(string name)
         {
             return string.IsNullOrEmpty(name)
                 || name == "NewAvatar"
                 || name == "MyAvatar"
+                || name == "Test"
+                || name == "Test Prefab"
+                || name == "Name Prefab"
                 || name == KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME;
+        }
+
+        public static void ApplyNamesFromObject(KaleidoAssetOrganizer window, string objectName)
+        {
+            if (window == null) return;
+            string baseName = SanitizeDroppedObjectName(objectName);
+            if (string.IsNullOrEmpty(baseName)) baseName = "Avatar";
+            window.sceneName = baseName + " Scene";
+            window.prefabName = baseName + " Prefab";
+        }
+
+        private static string SanitizeDroppedObjectName(string objectName)
+        {
+            if (string.IsNullOrWhiteSpace(objectName)) return string.Empty;
+            string name = objectName.Trim();
+            if (name.EndsWith(" Prefab", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - " Prefab".Length).TrimEnd();
+            if (name.EndsWith(" Scene", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - " Scene".Length).TrimEnd();
+            if (name.EndsWith("_Scene", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - "_Scene".Length).TrimEnd();
+            return name;
         }
 
         public static void DrawSettings(KaleidoAssetOrganizer window)
         {
             GUILayout.Label("Settings & Automation Pipelines", EditorStyles.boldLabel);
+            if (window.objectsToOrganize != null
+                && window.objectsToOrganize.Count > 0
+                && window.objectsToOrganize[0] != null
+                && (IsSampleSceneName(window.sceneName) || IsSamplePrefabName(window.prefabName)))
+            {
+                ApplyNamesFromObject(window, window.objectsToOrganize[0].name);
+            }
             window.sceneName = EditorGUILayout.TextField("Scene Name", window.sceneName);
             window.prefabName = EditorGUILayout.TextField("Prefab Name", window.prefabName);
 
@@ -3466,9 +3502,7 @@ namespace KaleidoVR.EditorTools
             {
                 if (IsSampleSceneName(window.sceneName) || IsSamplePrefabName(window.prefabName))
                 {
-                    string primaryName = window.objectsToOrganize[countBeforeDrop].name;
-                    window.sceneName = primaryName + "_Scene";
-                    window.prefabName = primaryName;
+                    ApplyNamesFromObject(window, window.objectsToOrganize[countBeforeDrop].name);
                 }
             }
 
@@ -3493,12 +3527,12 @@ namespace KaleidoVR.EditorTools
                     }
                     evt.Use();
                 }
-                if (i == 0 && window.objectsToOrganize[i] != oldObj && window.objectsToOrganize[i] != null) { string primaryName = window.objectsToOrganize[i].name; window.sceneName = primaryName + "_Scene"; window.prefabName = primaryName; }
+                if (i == 0 && window.objectsToOrganize[i] != oldObj && window.objectsToOrganize[i] != null) ApplyNamesFromObject(window, window.objectsToOrganize[i].name);
                 if (GUILayout.Button("X", GUILayout.Width(25)))
                 {
                     window.objectsToOrganize.RemoveAt(i); i--;
                     if (window.objectsToOrganize.Count == 0) { window.sceneName = KaleidoAssetOrganizer.SAMPLE_SCENE_NAME; window.prefabName = KaleidoAssetOrganizer.SAMPLE_PREFAB_NAME; }
-                    else if (i < 0 && window.objectsToOrganize.Count > 0 && window.objectsToOrganize != null) { string primaryName = window.objectsToOrganize[0].name; window.sceneName = primaryName + "_Scene"; window.prefabName = primaryName; }
+                    else if (i < 0 && window.objectsToOrganize.Count > 0 && window.objectsToOrganize[0] != null) ApplyNamesFromObject(window, window.objectsToOrganize[0].name);
                 }
                 EditorGUILayout.EndHorizontal();
             }
