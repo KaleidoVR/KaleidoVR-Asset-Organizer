@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.2";
+        public static readonly string VERSION = "1.0.3";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -2421,9 +2421,8 @@ namespace KaleidoVR.EditorTools
             window.prefabName = EditorGUILayout.TextField("Prefab Name", window.prefabName);
 
             float originalLabelWidth = EditorGUIUtility.labelWidth;
-            EditorGUIUtility.labelWidth = 180f;
-            window.createPrefab = EditorGUILayout.Toggle("Create Prefab", window.createPrefab);
             EditorGUIUtility.labelWidth = 220f;
+            window.createPrefab = EditorGUILayout.Toggle("Create Prefab", window.createPrefab);
             window.renameOldAndNewObjects = EditorGUILayout.Toggle("Rename Old / New Objects", window.renameOldAndNewObjects);
             EditorGUIUtility.labelWidth = originalLabelWidth;
         }
