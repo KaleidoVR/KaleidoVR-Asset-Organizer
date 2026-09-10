@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.4";
+        public static readonly string VERSION = "1.0.5";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -1336,12 +1336,96 @@ namespace KaleidoVR.EditorTools
             string folderPath = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(outputDirectory);
             if (string.IsNullOrEmpty(folderPath)) return;
 
+            EditorApplication.delayCall += () => ShowProjectFolderContents(folderPath);
+        }
+
+        private static void ShowProjectFolderContents(string folderPath)
+        {
             DefaultAsset folder = AssetDatabase.LoadAssetAtPath<DefaultAsset>(folderPath);
             if (folder == null) return;
 
             EditorUtility.FocusProjectWindow();
+            if (TryShowFolderContentsInProjectWindow(folder)) return;
+
             Selection.activeObject = folder;
             EditorGUIUtility.PingObject(folder);
+        }
+
+        private static bool TryShowFolderContentsInProjectWindow(DefaultAsset folder)
+        {
+            Type browserType = typeof(Editor).Assembly.GetType("UnityEditor.ProjectBrowser");
+            if (browserType == null) return false;
+
+            MethodInfo showFolder = FindShowFolderContentsMethod(browserType);
+            if (showFolder == null) return false;
+
+            UnityEngine.Object[] browsers = Resources.FindObjectsOfTypeAll(browserType);
+            if (browsers == null || browsers.Length == 0)
+            {
+                EditorWindow.GetWindow(browserType);
+                browsers = Resources.FindObjectsOfTypeAll(browserType);
+            }
+            if (browsers == null || browsers.Length == 0) return false;
+
+            object folderId = CoerceShowFolderId(showFolder, folder.GetInstanceID());
+            bool shown = false;
+            foreach (UnityEngine.Object browser in browsers)
+            {
+                if (browser == null) continue;
+                EnsureTwoColumnProjectBrowser(browser);
+                try
+                {
+                    showFolder.Invoke(browser, new object[] { folderId, true });
+                    shown = true;
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
+
+            return shown;
+        }
+
+        private static MethodInfo FindShowFolderContentsMethod(Type browserType)
+        {
+            foreach (MethodInfo method in browserType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (method.Name != "ShowFolderContents") continue;
+                ParameterInfo[] parameters = method.GetParameters();
+                if (parameters.Length == 2 && parameters[1].ParameterType == typeof(bool)) return method;
+            }
+
+            return null;
+        }
+
+        private static object CoerceShowFolderId(MethodInfo showFolder, int folderInstanceId)
+        {
+            ParameterInfo[] parameters = showFolder.GetParameters();
+            if (parameters.Length == 0 || parameters[0].ParameterType == typeof(int)) return folderInstanceId;
+
+            Type idType = parameters[0].ParameterType;
+            MethodInfo implicitFromInt = idType.GetMethod("op_Implicit", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
+            if (implicitFromInt != null) return implicitFromInt.Invoke(null, new object[] { folderInstanceId });
+
+            try
+            {
+                return Activator.CreateInstance(idType, folderInstanceId);
+            }
+            catch (Exception)
+            {
+                return folderInstanceId;
+            }
+        }
+
+        private static void EnsureTwoColumnProjectBrowser(UnityEngine.Object browser)
+        {
+            SerializedObject serialized = new SerializedObject(browser);
+            SerializedProperty viewMode = serialized.FindProperty("m_ViewMode");
+            if (viewMode != null && viewMode.enumValueIndex == 1) return;
+
+            MethodInfo setTwoColumns = browser.GetType().GetMethod("SetTwoColumns", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (setTwoColumns != null) setTwoColumns.Invoke(browser, null);
         }
 
         private static void OrderSelectedScenesCameraLightAboveAvatars(List<UnityEngine.Object> selected)
