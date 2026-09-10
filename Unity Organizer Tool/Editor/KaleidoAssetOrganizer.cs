@@ -23,7 +23,7 @@ namespace KaleidoVR.EditorTools
 {
     public class KaleidoAssetOrganizer : EditorWindow
     {
-        public static readonly string VERSION = "1.0.1";
+        public static readonly string VERSION = "1.0.2";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -704,6 +704,10 @@ namespace KaleidoVR.EditorTools
 
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
+
+                // Unlock copied Poiyomi materials before remapping so texture slots can
+                // follow the new files. Leave them unlocked; VRChat/Poiyomi lock on upload.
+                UnlockTransferredPoiyomiMaterials(copiedAssetsMap, logEntries);
 
                 // Copy and Move both land as new-GUID files. Remap those copies onto each other
                 // before the originals are deleted.
@@ -1821,6 +1825,164 @@ namespace KaleidoVR.EditorTools
             }
         }
 
+        private static bool IsPoiyomiLocked(Material material)
+        {
+            if (material == null) return false;
+            if (material.HasProperty("_ShaderOptimizerEnabled") && material.GetFloat("_ShaderOptimizerEnabled") > 0.5f)
+            {
+                return true;
+            }
+
+            string shaderName = material.shader != null ? material.shader.name : string.Empty;
+            return !string.IsNullOrEmpty(shaderName)
+                && shaderName.IndexOf("Locked", StringComparison.OrdinalIgnoreCase) >= 0
+                && (shaderName.IndexOf("Poiyomi", StringComparison.OrdinalIgnoreCase) >= 0
+                    || shaderName.IndexOf("Hidden", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static void UnlockTransferredPoiyomiMaterials(Dictionary<string, string> copiedAssetsMap, List<string> logEntries)
+        {
+            if (copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
+
+            List<Material> lockedMaterials = new List<Material>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string destPath in copiedAssetsMap.Values)
+            {
+                if (string.IsNullOrEmpty(destPath) || !seen.Add(destPath)) continue;
+                Material material = AssetDatabase.LoadAssetAtPath<Material>(destPath);
+                if (IsPoiyomiLocked(material)) lockedMaterials.Add(material);
+            }
+
+            if (lockedMaterials.Count == 0) return;
+
+            if (TryUnlockPoiyomiMaterials(lockedMaterials))
+            {
+                foreach (Material material in lockedMaterials)
+                {
+                    if (material != null) EditorUtility.SetDirty(material);
+                }
+                AssetDatabase.SaveAssets();
+                logEntries.Add("Unlocked Poiyomi materials and left them unlocked: " + lockedMaterials.Count);
+                return;
+            }
+
+            logEntries.Add("Could not unlock " + lockedMaterials.Count + " Poiyomi material(s). Thry ShaderOptimizer was not found, so locked materials were left as-is and their texture slots were not remapped.");
+            Debug.LogWarning("[KaleidoVR] Poiyomi materials are locked, but Thry ShaderOptimizer is not in this project. Install Poiyomi/Thry to unlock them during organize. Locked materials were not remapped.");
+        }
+
+        private static bool TryUnlockPoiyomiMaterials(List<Material> materials)
+        {
+            if (materials == null || materials.Count == 0) return true;
+
+            Type optimizerType = FindThryShaderOptimizerType();
+            if (optimizerType == null) return false;
+
+            try
+            {
+                MethodInfo unlockMaterials = FindUnlockMethod(optimizerType, "UnlockMaterials");
+                if (unlockMaterials != null)
+                {
+                    InvokeThryUnlock(unlockMaterials, materials);
+                    return true;
+                }
+
+                MethodInfo setLocked = FindUnlockMethod(optimizerType, "SetLockedForAllMaterials");
+                if (setLocked != null)
+                {
+                    InvokeThrySetLocked(setLocked, materials, 0);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[KaleidoVR] Poiyomi unlock failed: " + ex.Message);
+                return false;
+            }
+
+            return false;
+        }
+
+        private static Type FindThryShaderOptimizerType()
+        {
+            string[] typeNames = { "Thry.ThryEditor.ShaderOptimizer", "Thry.ShaderOptimizer" };
+            Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            foreach (string typeName in typeNames)
+            {
+                Type found = Type.GetType(typeName);
+                if (found != null) return found;
+                foreach (Assembly assembly in assemblies)
+                {
+                    try
+                    {
+                        found = assembly.GetType(typeName);
+                    }
+                    catch (Exception)
+                    {
+                        found = null;
+                    }
+                    if (found != null) return found;
+                }
+            }
+            return null;
+        }
+
+        private static MethodInfo FindUnlockMethod(Type optimizerType, string methodName)
+        {
+            MethodInfo[] methods = optimizerType.GetMethods(BindingFlags.Public | BindingFlags.Static);
+            foreach (MethodInfo method in methods)
+            {
+                if (method.Name == methodName) return method;
+            }
+            return null;
+        }
+
+        private static void InvokeThryUnlock(MethodInfo method, List<Material> materials)
+        {
+            ParameterInfo[] parameters = method.GetParameters();
+            if (parameters.Length == 0) return;
+            if (parameters.Length == 1)
+            {
+                method.Invoke(null, new object[] { materials });
+                return;
+            }
+
+            object progressArg = parameters[1].ParameterType.IsEnum
+                ? Enum.ToObject(parameters[1].ParameterType, 0)
+                : false;
+            method.Invoke(null, new object[] { materials, progressArg });
+        }
+
+        private static void InvokeThrySetLocked(MethodInfo method, List<Material> materials, int lockState)
+        {
+            ParameterInfo[] parameters = method.GetParameters();
+            object[] args = new object[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                Type paramType = parameters[i].ParameterType;
+                if (typeof(System.Collections.IEnumerable).IsAssignableFrom(paramType) && paramType != typeof(string))
+                {
+                    args[i] = materials;
+                }
+                else if (paramType == typeof(int))
+                {
+                    args[i] = lockState;
+                }
+                else if (paramType == typeof(bool))
+                {
+                    args[i] = false;
+                }
+                else if (paramType.IsEnum)
+                {
+                    args[i] = Enum.ToObject(paramType, 0);
+                }
+                else
+                {
+                    args[i] = paramType.IsValueType ? Activator.CreateInstance(paramType) : null;
+                }
+            }
+            method.Invoke(null, args);
+        }
+
         private static void RemapCopiedAssetReferences(Dictionary<string, string> copiedAssetsMap, HashSet<string> protectedAssetPaths)
         {
             if (copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
@@ -1834,6 +1996,7 @@ namespace KaleidoVR.EditorTools
                 foreach (UnityEngine.Object asset in assets)
                 {
                     if (asset == null) continue;
+                    if (asset is Material lockedMat && IsPoiyomiLocked(lockedMat)) continue;
                     RemapSerializedReferences(asset, copiedAssetsMap);
                 }
             }
