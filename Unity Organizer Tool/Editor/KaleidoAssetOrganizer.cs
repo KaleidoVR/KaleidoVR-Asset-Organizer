@@ -21,7 +21,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.1.3";
+        public static readonly string VERSION = "1.1.4";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -657,10 +657,7 @@ namespace KaleidoVR.EditorTools
                 string organizedObjectName = window.renameOldAndNewObjects
                     ? FormatTransferObjectName(primaryObjectName, true, transferActionName)
                     : safePrefabName;
-                string prefabFileName = window.renameOldAndNewObjects
-                    ? KaleidoAssetOrganizerHelpers.SanitizeFileName(organizedObjectName)
-                    : safePrefabName;
-                if (string.IsNullOrEmpty(prefabFileName)) prefabFileName = safePrefabName;
+                string prefabFileName = safePrefabName;
                 string savedPrefabPath = null;
                 GameObject finalTargetRoot = null;
                 List<GameObject> instantiatedInstances = new List<GameObject>();
@@ -731,29 +728,15 @@ namespace KaleidoVR.EditorTools
                         {
                             string prefabFolder = $"{window.outputDirectory}/Prefabs".Replace("\\", "/");
                             string prefabPath = $"{prefabFolder}/{prefabFileName}.prefab";
-                            bool wrappingMultiple = activeTargetGameObjects.Count > 1;
-                            string transferredPrefab = wrappingMultiple ? null : FindTransferredSourcePrefab(activeTargetGameObjects, movedAssetsMap);
-                            bool transferredWasCopied = !string.IsNullOrEmpty(transferredPrefab) && copiedDestinations.Contains(transferredPrefab);
-                            bool transferredWasMoved = !string.IsNullOrEmpty(transferredPrefab) && !transferredWasCopied;
-
-                            if (transferredWasMoved)
-                            {
-                                savedPrefabPath = transferredPrefab;
-                                logEntries.Add("Using transferred prefab: " + transferredPrefab);
-                            }
-                            else if (!EnsureSingleAssetDirectory(prefabFolder))
+                            if (!EnsureSingleAssetDirectory(prefabFolder))
                             {
                                 logEntries.Add("Prefab folder create failed: " + prefabFolder);
                             }
                             else
                             {
-                                if (transferredWasCopied)
+                                if (protectedAssetPaths.Contains(prefabPath) || AssetDatabase.LoadMainAssetAtPath(prefabPath) != null)
                                 {
-                                    prefabPath = transferredPrefab;
-                                }
-                                if (protectedAssetPaths.Contains(prefabPath) || (AssetDatabase.LoadMainAssetAtPath(prefabPath) != null && !transferredWasCopied))
-                                {
-                                    prefabPath = AssetDatabase.GenerateUniqueAssetPath($"{prefabFolder}/{prefabFileName}.prefab");
+                                    prefabPath = AssetDatabase.GenerateUniqueAssetPath(prefabPath);
                                 }
                                 AssetDatabase.SaveAssets();
                                 PrefabUtility.SaveAsPrefabAsset(finalTargetRoot, prefabPath);
@@ -1101,26 +1084,6 @@ namespace KaleidoVR.EditorTools
         {
             path = KaleidoAssetOrganizerHelpers.NormalizeAssetPath(path);
             return !string.IsNullOrEmpty(path) && protectedAssetPaths != null && protectedAssetPaths.Contains(path);
-        }
-
-        private static string FindTransferredSourcePrefab(List<GameObject> roots, Dictionary<string, string> movedAssetsMap)
-        {
-            if (roots == null || movedAssetsMap == null) return null;
-            foreach (GameObject go in roots)
-            {
-                string sourcePath = ResolveGameObjectAssetPath(go);
-                if (string.IsNullOrEmpty(sourcePath) || !sourcePath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-                if (movedAssetsMap.TryGetValue(sourcePath, out string destPath)
-                    && !string.IsNullOrEmpty(destPath)
-                    && destPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
-                {
-                    return destPath;
-                }
-            }
-            return null;
         }
 
         private static HashSet<string> CollectProjectAssetPaths(List<UnityEngine.Object> selected, List<UnityEngine.Object> ignoreList, HashSet<GameObject> ignoredHierarchy, List<string> logEntries)
