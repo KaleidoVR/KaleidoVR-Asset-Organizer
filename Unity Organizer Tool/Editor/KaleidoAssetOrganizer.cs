@@ -24,7 +24,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.0.8";
+        public static readonly string VERSION = "1.0.9";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -850,7 +850,7 @@ namespace KaleidoVR.EditorTools
                 if (originalsToDeleteAfterMove.Count > 0)
                 {
                     RetargetLeftoverSourceAssets(window.objectsToOrganize, copiedAssetsMap, originalsToDeleteAfterMove, protectedAssetPaths, logEntries);
-                    RetargetOriginalsToNewAssets(window.objectsToOrganize, copiedAssetsMap, originalsToDeleteAfterMove, savedPrefabPath, logEntries);
+                    RetargetOriginalsToNewAssets(window.objectsToOrganize, copiedAssetsMap, originalsToDeleteAfterMove, logEntries);
                 }
                 if (window.renameOldAndNewObjects)
                 {
@@ -1910,6 +1910,7 @@ namespace KaleidoVR.EditorTools
             {
                 if (string.IsNullOrEmpty(path)) continue;
                 if (IsProtectedAssetPath(path, protectedAssetPaths)) continue;
+                if (IsPrefabOrModelPath(path)) continue;
                 if (AssetDatabase.LoadMainAssetAtPath(path) == null) continue;
 
                 UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath(path);
@@ -2102,14 +2103,9 @@ namespace KaleidoVR.EditorTools
             List<UnityEngine.Object> selected,
             Dictionary<string, string> copiedAssetsMap,
             HashSet<string> originalsToDelete,
-            string organizedPrefabPath,
             List<string> logEntries)
         {
             if (selected == null || copiedAssetsMap == null || copiedAssetsMap.Count == 0) return;
-
-            GameObject organizedPrefab = !string.IsNullOrEmpty(organizedPrefabPath)
-                ? AssetDatabase.LoadAssetAtPath<GameObject>(organizedPrefabPath)
-                : null;
 
             for (int i = 0; i < selected.Count; i++)
             {
@@ -2127,12 +2123,19 @@ namespace KaleidoVR.EditorTools
                         GameObject instanceRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(go);
                         if (instanceRoot == null) instanceRoot = go;
                         string prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(instanceRoot);
-                        if (!string.IsNullOrEmpty(prefabPath)
-                            && (originalsToDelete.Contains(prefabPath) || copiedAssetsMap.ContainsKey(prefabPath)))
+                        bool originalPrefabStays = !string.IsNullOrEmpty(prefabPath)
+                            && (originalsToDelete == null || !originalsToDelete.Contains(prefabPath));
+                        if (originalPrefabStays)
+                        {
+                            logEntries.Add("Left original object on its original prefab: " + prefabPath);
+                            continue;
+                        }
+
+                        if (!string.IsNullOrEmpty(prefabPath))
                         {
                             PrefabUtility.UnpackPrefabInstance(instanceRoot, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
                             remapRoot = instanceRoot;
-                            logEntries.Add("Unpacked original instance so it can keep the new asset references: " + prefabPath);
+                            logEntries.Add("Unpacked original instance because its prefab was moved: " + prefabPath);
                         }
                     }
 
@@ -2142,11 +2145,6 @@ namespace KaleidoVR.EditorTools
                         if (comp != null) RemapSerializedReferences(comp, copiedAssetsMap);
                     }
 
-                    if (organizedPrefab != null && CountSelectedSceneRoots(selected) == 1)
-                    {
-                        TryConnectSceneObjectToOrganizedPrefab(remapRoot, organizedPrefab, logEntries);
-                    }
-
                     EditorUtility.SetDirty(remapRoot);
                     if (remapRoot.scene.IsValid()) EditorSceneManager.MarkSceneDirty(remapRoot.scene);
                     logEntries.Add("Retargeted original object to organized assets: " + remapRoot.name);
@@ -2154,6 +2152,12 @@ namespace KaleidoVR.EditorTools
                 }
 
                 string assetPath = AssetDatabase.GetAssetPath(obj);
+                if (IsPrefabOrModelPath(assetPath))
+                {
+                    logEntries.Add("Left original prefab/model unchanged: " + assetPath);
+                    continue;
+                }
+
                 if (!string.IsNullOrEmpty(assetPath))
                 {
                     UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
@@ -2186,39 +2190,10 @@ namespace KaleidoVR.EditorTools
             }
         }
 
-        private static int CountSelectedSceneRoots(List<UnityEngine.Object> selected)
+        private static bool IsPrefabOrModelPath(string path)
         {
-            if (selected == null) return 0;
-            int count = 0;
-            foreach (UnityEngine.Object obj in selected)
-            {
-                if (obj == null) continue;
-                GameObject go = obj as GameObject;
-                if (go == null && obj is Component asComponent) go = asComponent.gameObject;
-                if (go != null && !EditorUtility.IsPersistent(go)) count++;
-            }
-            return count;
-        }
-
-        private static void TryConnectSceneObjectToOrganizedPrefab(GameObject sceneObject, GameObject organizedPrefab, List<string> logEntries)
-        {
-            if (sceneObject == null || organizedPrefab == null) return;
-
-            try
-            {
-                ConvertToPrefabInstanceSettings settings = new ConvertToPrefabInstanceSettings
-                {
-                    objectMatchMode = ObjectMatchMode.ByHierarchy,
-                    componentsNotMatchedBecomesOverride = true,
-                    gameObjectsNotMatchedBecomesOverride = true
-                };
-                PrefabUtility.ConvertToPrefabInstance(sceneObject, organizedPrefab, settings, InteractionMode.AutomatedAction);
-                logEntries.Add("Connected original object to organized prefab: " + AssetDatabase.GetAssetPath(organizedPrefab));
-            }
-            catch (Exception ex)
-            {
-                logEntries.Add("Could not reconnect original object to organized prefab: " + ex.Message);
-            }
+            if (string.IsNullOrEmpty(path)) return false;
+            return IsModelFile(path) || path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsPoiyomiMaterial(Material material)
