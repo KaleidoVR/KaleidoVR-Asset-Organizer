@@ -21,7 +21,7 @@ namespace KaleidoVR.EditorTools
     public class KaleidoAssetOrganizer : EditorWindow
     {
         // Each digit rolls 0-9. After 1.0.9 comes 1.1.0; after 1.9.9 comes 2.0.0.
-        public static readonly string VERSION = "1.1.5";
+        public static readonly string VERSION = "1.1.6";
         public const string LOGO_FILE_NAME = "Kali_Logo.png";
         public const string FALLBACK_ICON_PATH = "Assets/KaleidoVR/Editor/Icons/Kali_Logo.png";
 
@@ -208,7 +208,7 @@ namespace KaleidoVR.EditorTools
             float logoHeight = headerIcon != null ? 200f : 15f;
             float outputDirHeight = 45f;
             float settingsHeight = 100f;
-            float objectsHeight = 65f + (objectsToOrganize.Count * 22f);
+            float objectsHeight = 120f + (objectsToOrganize.Count * 22f);
             float organizeOptionsHeight = (organizeOptions.Count * 22f) + 90f;
             float ignoreListHeight = 65f + (ignoreList.Count * 22f);
             float organizeButtonHeight = 55f;
@@ -3349,6 +3349,9 @@ namespace KaleidoVR.EditorTools
     public static class KaleidoAssetOrganizerUI
     {
         private static readonly string[] organizeActions = new string[] { "Copy", "Move", "Ignore" };
+        private static GUIStyle dropTitleStyle;
+        private static GUIStyle dropHintStyle;
+        private static bool cachedDropProSkin = true;
 
         public static void DrawHeader(KaleidoAssetOrganizer window, Texture2D logo, string version)
         {
@@ -3454,11 +3457,79 @@ namespace KaleidoVR.EditorTools
             EditorGUIUtility.labelWidth = originalLabelWidth;
         }
 
+        private static void EnsureDropStyles()
+        {
+            bool pro = EditorGUIUtility.isProSkin;
+            if (dropTitleStyle != null && cachedDropProSkin == pro) return;
+            cachedDropProSkin = pro;
+
+            dropTitleStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 13,
+                wordWrap = true
+            };
+            dropTitleStyle.normal.textColor = pro ? new Color(0.45f, 0.92f, 1f, 1f) : new Color(0.05f, 0.38f, 0.62f, 1f);
+
+            dropHintStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = true
+            };
+            dropHintStyle.normal.textColor = pro ? new Color(0.82f, 0.92f, 0.42f, 1f) : new Color(0.28f, 0.45f, 0.02f, 1f);
+        }
+
+        private static void DrawBoxOutline(Rect rect, Color color)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            EditorGUI.DrawRect(new Rect(rect.x, rect.y, rect.width, 2f), color);
+            EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 2f, rect.width, 2f), color);
+            EditorGUI.DrawRect(new Rect(rect.x, rect.y, 2f, rect.height), color);
+            EditorGUI.DrawRect(new Rect(rect.xMax - 2f, rect.y, 2f, rect.height), color);
+        }
+
+        private static void DrawProminentOrganizeDrop(List<UnityEngine.Object> list)
+        {
+            EnsureDropStyles();
+            Rect dropArea = GUILayoutUtility.GetRect(0, 78, GUILayout.ExpandWidth(true));
+            bool dragging = DragAndDrop.objectReferences != null && DragAndDrop.objectReferences.Length > 0;
+            bool hover = dragging && dropArea.Contains(Event.current.mousePosition);
+            bool pro = EditorGUIUtility.isProSkin;
+            Color fill = hover
+                ? (pro ? new Color(0.12f, 0.32f, 0.18f, 1f) : new Color(0.72f, 0.92f, 0.74f, 1f))
+                : (pro ? new Color(0.13f, 0.20f, 0.28f, 1f) : new Color(0.82f, 0.90f, 0.97f, 1f));
+            Color border = hover ? new Color(0.20f, 0.72f, 0.32f, 1f) : new Color(0.20f, 0.62f, 0.90f, 1f);
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(dropArea, fill);
+                DrawBoxOutline(dropArea, border);
+            }
+
+            int ready = 0;
+            if (list != null)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i] != null) ready++;
+                }
+            }
+
+            Rect titleRect = new Rect(dropArea.x + 10, dropArea.y + 10, dropArea.width - 20, 24);
+            Rect hintRect = new Rect(dropArea.x + 12, dropArea.y + 34, dropArea.width - 24, 36);
+            GUI.Label(titleRect, "Drop your avatar here", dropTitleStyle);
+            string hint = ready == 0
+                ? "Prefab, scene instance, or character FBX"
+                : (ready == 1 ? "1 avatar ready  ·  drop another, or use the slots below" : ready + " avatars ready  ·  drop another, or use the slots below");
+            GUI.Label(hintRect, hint, dropHintStyle);
+            KaleidoAssetOrganizerHelpers.HandleDragAndDrop(dropArea, list);
+        }
+
         public static void DrawObjectsToOrganize(KaleidoAssetOrganizer window)
         {
             GUILayout.Label("Objects to Organize", EditorStyles.boldLabel);
-            Rect dropArea = GUILayoutUtility.GetRect(0, 30, GUILayout.ExpandWidth(true)); GUI.Box(dropArea, "Drag & Drop Objects Here", EditorStyles.helpBox);
-            int countBeforeDrop = window.objectsToOrganize.Count; KaleidoAssetOrganizerHelpers.HandleDragAndDrop(dropArea, window.objectsToOrganize);
+            int countBeforeDrop = window.objectsToOrganize.Count;
+            DrawProminentOrganizeDrop(window.objectsToOrganize);
 
             if (window.objectsToOrganize.Count > countBeforeDrop && window.objectsToOrganize.Count > 0 && window.objectsToOrganize[countBeforeDrop] != null)
             {
@@ -3505,6 +3576,9 @@ namespace KaleidoVR.EditorTools
         public static void DrawOrganizeOptions(KaleidoAssetOrganizer window)
         {
             GUILayout.Label("Export List Options", EditorStyles.boldLabel);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(14);
+            EditorGUILayout.BeginVertical();
             bool drewSpecialWarning = false;
             foreach (var key in new List<string>(window.organizeOptions.Keys))
             {
@@ -3523,6 +3597,9 @@ namespace KaleidoVR.EditorTools
                 EditorGUILayout.BeginHorizontal(); GUIContent rowContent = new GUIContent($" {FriendlyName(key)}", GetNativeUnityIcon(key)); GUILayout.Label(rowContent, GUILayout.Height(18), GUILayout.Width(240)); GUILayout.FlexibleSpace();
                 int currentIndex = Array.IndexOf(organizeActions, window.organizeOptions[key]); int selectedIndex = EditorGUILayout.Popup(currentIndex < 0 ? 0 : currentIndex, organizeActions, GUILayout.Width(90)); window.organizeOptions[key] = organizeActions[selectedIndex]; EditorGUILayout.EndHorizontal();
             }
+            EditorGUILayout.EndVertical();
+            GUILayout.Space(14);
+            EditorGUILayout.EndHorizontal();
         }
 
         private static Texture GetNativeUnityIcon(string typeName)
