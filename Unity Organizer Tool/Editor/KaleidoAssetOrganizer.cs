@@ -212,10 +212,11 @@ namespace KaleidoVR.EditorTools
             float organizeOptionsHeight = (organizeOptions.Count * 22f) + 90f;
             float ignoreListHeight = 65f + (ignoreList.Count * 22f);
             float organizeButtonHeight = 55f;
+            float creditsButtonHeight = 26f;
             float discordButtonHeight = 28f;
             float footerHeight = 25f;
 
-            float totalHeight = logoHeight + outputDirHeight + settingsHeight + objectsHeight + organizeOptionsHeight + ignoreListHeight + organizeButtonHeight + discordButtonHeight + footerHeight;
+            float totalHeight = logoHeight + outputDirHeight + settingsHeight + objectsHeight + organizeOptionsHeight + ignoreListHeight + organizeButtonHeight + creditsButtonHeight + discordButtonHeight + footerHeight;
 
             Vector2 targetSize = new Vector2(500, totalHeight);
             minSize = targetSize;
@@ -3362,6 +3363,12 @@ namespace KaleidoVR.EditorTools
             else { GUILayout.Label($"...Place your logo at {KaleidoAssetOrganizer.ICON_PATH}...", EditorStyles.miniLabel); }
             GUILayout.FlexibleSpace(); GUILayout.EndHorizontal(); GUILayout.Space(2);
             GUILayout.Label("KALEIDO VR ORGANIZER", centeredTitleStyle); GUILayout.Label($"v{version}", centeredVersionStyle);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("KaleidoVR (Credits)", GUILayout.Width(160), GUILayout.Height(22)))
+                KaleidoVRCreditsWindow.Open();
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
         }
 
         public static void DrawOutputDirectory(KaleidoAssetOrganizer window)
