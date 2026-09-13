@@ -46,7 +46,7 @@ Each asset type can be set to one of three actions:
 - **Move** — relocate the original into the output folder. Use only when you intend to move your source files.
 - **Ignore** — skip the type entirely.
 
-Scripts, DLLs, shaders, and anything under `Packages/` or `Assets/Editor` are always skipped, so the tool will not relocate Poiyomi, the VRChat SDK, or other installed packages.
+Scripts, DLLs, shaders, and anything under `Packages/`, `Assets/Editor`, `Assets/KaleidoVR/Editor`, or `Assets/KaleidoVR/Generated` are always skipped, so the tool will not relocate Poiyomi, the VRChat SDK, Kaleido editor scripts, or Kaleido generated cache.
 
 ### Settings
 

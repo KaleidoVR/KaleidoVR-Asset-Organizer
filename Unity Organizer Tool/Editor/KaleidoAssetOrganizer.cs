@@ -307,15 +307,56 @@ namespace KaleidoVR.EditorTools
             foreach (Transform child in parent) CollectChildObjects(child, list, ignoreList);
         }
 
+        public const string KaleidoEditorFolder = "Assets/KaleidoVR/Editor";
+        public const string KaleidoGeneratedFolder = "Assets/KaleidoVR/Generated";
+        const string GeneratedPreviewSuffix = " (Optimized Copy)";
+
+        public static bool IsKaleidoReservedPath(string path)
+        {
+            path = NormalizeAssetPath(path);
+            if (string.IsNullOrEmpty(path)) return false;
+            return IsSameOrInside(path, KaleidoEditorFolder)
+                || IsSameOrInside(path, KaleidoGeneratedFolder);
+        }
+
         public static bool ShouldIgnoreAsset(string path)
         {
             if (string.IsNullOrEmpty(path)) return true;
+            if (IsKaleidoReservedPath(path)) return true;
             string lower = path.ToLowerInvariant();
             return lower.EndsWith(".cs") || lower.EndsWith(".dll") || lower.EndsWith(".asmdef") || lower.EndsWith(".pdb")
                    || lower.EndsWith(".meta") || lower.StartsWith("packages/")
                    || lower == "assets/editor" || lower.StartsWith("assets/editor/")
                    || lower.StartsWith("library/") || lower.StartsWith("resources/unity_builtin_extra")
                    || lower.Contains("unity default resources") || lower.Contains("unity_builtin_extra");
+        }
+
+        public static bool IsGeneratedPreviewObject(UnityEngine.Object obj)
+        {
+            if (obj == null) return false;
+            GameObject go = obj as GameObject;
+            if (go == null && obj is Component component) go = component.gameObject;
+            if (go != null && go.name.IndexOf(GeneratedPreviewSuffix, StringComparison.Ordinal) >= 0)
+                return true;
+
+            string path = AssetDatabase.GetAssetPath(obj);
+            if (IsKaleidoReservedPath(path)) return true;
+            if (go == null) return false;
+
+            string ownPath = AssetDatabase.GetAssetPath(go);
+            if (IsKaleidoReservedPath(ownPath)) return true;
+            string prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(go);
+            return IsKaleidoReservedPath(prefabPath);
+        }
+
+        public static bool SelectionIncludesGeneratedPreview(List<UnityEngine.Object> selected)
+        {
+            if (selected == null) return false;
+            for (int i = 0; i < selected.Count; i++)
+            {
+                if (IsGeneratedPreviewObject(selected[i])) return true;
+            }
+            return false;
         }
 
         public static string NormalizeAssetPath(string path)
@@ -357,6 +398,11 @@ namespace KaleidoVR.EditorTools
             if (output.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
             {
                 error = "Output folder cannot be inside Packages.";
+                return false;
+            }
+            if (IsKaleidoReservedPath(output))
+            {
+                error = "Output folder cannot be inside Assets/KaleidoVR/Editor or Assets/KaleidoVR/Generated.";
                 return false;
             }
             return true;
@@ -506,6 +552,15 @@ namespace KaleidoVR.EditorTools
                 if (EditorApplication.isPlayingOrWillChangePlaymode)
                 {
                     EditorUtility.DisplayDialog("KaleidoVR Asset Organizer", "Exit Play Mode before organizing assets.", "OK");
+                    return;
+                }
+
+                if (KaleidoAssetOrganizerHelpers.SelectionIncludesGeneratedPreview(window.objectsToOrganize))
+                {
+                    EditorUtility.DisplayDialog(
+                        "KaleidoVR Asset Organizer",
+                        "The selected object is a generated preview copy, or it lives under Assets/KaleidoVR/Editor or Assets/KaleidoVR/Generated.\n\nDrop the original avatar FBX or prefab instead. Those Kaleido folders stay in place.",
+                        "OK");
                     return;
                 }
 
